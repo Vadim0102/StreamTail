@@ -1,39 +1,52 @@
 from app.core.plugin_manager import PluginManager
 from app.core.event_bus import EventBus
 from app.services.stream_service import StreamService
+from app.services.game_service import GameService
+from app.services.notification_service import NotificationService
 from app.core.scheduler import Scheduler
+from app.core.service_container import container
+from app.utils.config import load_config
+from app.utils.logger import setup_logger
 
 
 class StreamTailApp:
     def __init__(self):
-        self.event_bus = EventBus()
-        self.plugin_manager = PluginManager()
-        self.stream_service = StreamService(self.plugin_manager)
+        self.config = load_config()
+        self.logger = setup_logger()
 
-        # Инициализируем планировщик
+        self.event_bus = EventBus()
+        self.plugin_manager = PluginManager(self.config)
+
+        # Регистрация сервисов
+        self.stream_service = StreamService(self.plugin_manager)
+        self.game_service = GameService(self.config)
+        self.notification_service = NotificationService(self.event_bus, self.logger)
+
+        container.register("stream", self.stream_service)
+        container.register("games", self.game_service)
+
         self.scheduler = Scheduler(self.event_bus, self.plugin_manager)
 
     def bootstrap(self):
-        print("[StreamTail] Инициализация ядра...")
+        self.logger.info("Загрузка плагинов...")
         self.plugin_manager.load_plugins()
-        print(f"[StreamTail] Доступные платформы: {', '.join(self.plugin_manager.all().keys())}")
+
+        # Включаем плагины согласно конфигу
+        platform_config = self.config.get("platforms", {})
+        for name, plugin in self.plugin_manager.all().items():
+            if platform_config.get(name.lower(), {}).get("enabled", True):
+                plugin.enable()
 
     def run(self):
         self.bootstrap()
 
-        # Запускаем фоновую проверку статусов стрима (каждые 10 секунд)
-        self.scheduler.start(interval=10)
-        print("[StreamTail] Планировщик запущен.")
+        interval = self.config.get("app", {}).get("check_interval", 10)
+        self.scheduler.start(interval=interval)
 
-        # Запускаем GUI
-        # Импортируем здесь, чтобы избежать циклических импортов на старте
         from app.ui.desktop.main_window import StreamTailGUI
-
         gui = StreamTailGUI(self)
         try:
-            print("[StreamTail] Запуск графического интерфейса...")
             gui.run()
         finally:
-            # При закрытии окна корректно останавливаем фоновые потоки
-            print("[StreamTail] Остановка сервисов...")
+            self.logger.info("Остановка приложения...")
             self.scheduler.stop()

@@ -1,0 +1,29 @@
+app:
+  name: "StreamTail"
+  version: "1.1.0"
+  check_interval: 15
+
+platforms:
+  twitch:
+    enabled: true
+    client_id: "ТВОЙ_TWITCH_CLIENT_ID"
+    token: "ТВОЙ_TWITCH_OAUTH_TOKEN"
+    broadcaster_id: "ТВОЙ_TWITCH_USER_ID"
+
+  youtube:
+    enabled: false # Включи, когда добавишь токены
+    token: "ТВОЙ_YOUTUBE_OAUTH_TOKEN"
+    broadcast_id: "ID_ТЕКУЩЕЙ_ТРАНСЛЯЦИИ"
+
+  livevk:
+    enabled: false
+    token: "ТВОЙ_VK_ACCESS_TOKEN"
+    owner_id: "ID_ГРУППЫ_ИЛИ_ПОЛЬЗОВАТЕЛЯ"
+
+favorites:
+  games:
+    - "Just Chatting"
+    - "Software Development"
+    - "Minecraft"
+    - "Dota 2"
+    - "Cyberpunk 2077"

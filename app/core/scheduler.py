@@ -20,8 +20,11 @@ class Scheduler:
 
     def _loop(self, interval):
         while self.running:
-            # Раз в interval секунд проверяем статус всех включенных платформ
+            # Получаем расширенный статус всех платформ
             for name, plugin in self.plugin_manager.all().items():
-                is_live = plugin.execute("is_live")
-                self.event_bus.emit("stream_status_checked", {"platform": name, "is_live": is_live})
+                if plugin.enabled:
+                    status = plugin.execute("get_status")
+                    if isinstance(status, dict):
+                        status["platform"] = name
+                        self.event_bus.emit("stream_status_checked", status)
             time.sleep(interval)
