@@ -6,19 +6,19 @@ app:
 platforms:
   twitch:
     enabled: true
-    client_id: "ТВОЙ_TWITCH_CLIENT_ID"
-    token: "ТВОЙ_TWITCH_OAUTH_TOKEN"
-    broadcaster_id: "ТВОЙ_TWITCH_USER_ID"
+    client_id: "YOUR_TWITCH_CLIENT_ID"
+    token: "YOUR_TWITCH_OAUTH_TOKEN"
+    broadcaster_id: "YOUR_TWITCH_USER_ID"
 
   youtube:
-    enabled: false # Включи, когда добавишь токены
-    token: "ТВОЙ_YOUTUBE_OAUTH_TOKEN"
-    broadcast_id: "ID_ТЕКУЩЕЙ_ТРАНСЛЯЦИИ"
+    enabled: false
+    token: "YOUR_YOUTUBE_OAUTH_TOKEN"
+    broadcast_id: "YOUR_BROADCAST_ID"
 
   livevk:
     enabled: false
-    token: "ТВОЙ_VK_ACCESS_TOKEN"
-    owner_id: "ID_ГРУППЫ_ИЛИ_ПОЛЬЗОВАТЕЛЯ"
+    token: "YOUR_VK_ACCESS_TOKEN"
+    owner_id: "YOUR_OWNER_ID"
 
 favorites:
   games:

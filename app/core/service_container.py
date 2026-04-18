@@ -1,13 +1,13 @@
-# app/core/service_container.py
+from typing import Any, Dict
+
 class ServiceContainer:
     def __init__(self):
-        self._services = {}
+        self._services: Dict[str, Any] = {}
 
-    def register(self, name, service):
+    def register(self, name: str, service: Any):
         self._services[name] = service
 
-    def get(self, name):
+    def get(self, name: str) -> Any:
         return self._services.get(name)
 
-# Глобальный экземпляр
 container = ServiceContainer()

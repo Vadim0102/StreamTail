@@ -2,10 +2,11 @@ import importlib
 import inspect
 import os
 from app.plugins.base import BasePlugin
+from app.utils.logger import logger
 
 
 class PluginManager:
-    def __init__(self, config, plugins_path="app/platforms"):
+    def __init__(self, config: dict, plugins_path: str = "app/platforms"):
         self.config = config
         self.plugins_path = plugins_path
         self.plugins = {}
@@ -15,22 +16,22 @@ class PluginManager:
 
         for platform in os.listdir(self.plugins_path):
             path = os.path.join(self.plugins_path, platform)
-            if not os.path.isdir(path):
+            if not os.path.isdir(path) or platform.startswith("__"):
                 continue
 
             try:
                 module = importlib.import_module(f"app.platforms.{platform}.plugin")
                 for _, cls in inspect.getmembers(module, inspect.isclass):
                     if issubclass(cls, BasePlugin) and cls != BasePlugin:
-                        # Передаем специфичный конфиг платформы в плагин
                         platform_cfg = platforms_config.get(platform.lower(), {})
                         instance = cls(config=platform_cfg)
                         self.plugins[instance.name] = instance
+                        logger.debug(f"Загружен плагин: {instance.name}")
             except Exception as e:
-                print(f"Plugin load error: {platform}: {e}")
+                logger.error(f"Ошибка загрузки плагина {platform}: {e}")
 
-    def get(self, name):
+    def get(self, name: str) -> BasePlugin:
         return self.plugins.get(name)
 
-    def all(self):
+    def all(self) -> dict:
         return self.plugins
