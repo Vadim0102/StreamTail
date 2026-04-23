@@ -22,29 +22,40 @@ class TwitchPlugin(BasePlugin):
 
     async def get_status(self):
         status = {"is_live": False, "viewers": 0, "title": "", "game": ""}
-        async with httpx.AsyncClient() as client:
-            url = f"https://api.twitch.tv/helix/streams?user_id={self.broadcaster_id}"
-            resp = await client.get(url, headers=self.headers)
-            data = resp.json()
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                url = f"https://api.twitch.tv/helix/streams?user_id={self.broadcaster_id}"
+                resp = await client.get(url, headers=self.headers)
+                resp.raise_for_status()  # Важно! Бросит исключение при 401, 500 и тд.
+                data = resp.json()
 
-            if data.get("data"):
-                stream = data["data"][0]
-                status.update({
-                    "is_live": True,
-                    "viewers": stream.get("viewer_count", 0),
-                    "title": stream.get("title", ""),
-                    "game": stream.get("game_name", "")
-                })
-            else:
-                url_ch = f"https://api.twitch.tv/helix/channels?broadcaster_id={self.broadcaster_id}"
-                resp_ch = await client.get(url_ch, headers=self.headers)
-                ch_data = resp_ch.json()
-                if ch_data.get("data"):
-                    ch = ch_data["data"][0]
+                if data.get("data"):
+                    stream = data["data"][0]
                     status.update({
-                        "title": ch.get("title", ""),
-                        "game": ch.get("game_name", "")
+                        "is_live": True,
+                        "viewers": stream.get("viewer_count", 0),
+                        "title": stream.get("title", ""),
+                        "game": stream.get("game_name", "")
                     })
+                else:
+                    # Фоллбэк на канал
+                    url_ch = f"https://api.twitch.tv/helix/channels?broadcaster_id={self.broadcaster_id}"
+                    resp_ch = await client.get(url_ch, headers=self.headers)
+                    ch_data = resp_ch.json()
+                    if ch_data.get("data"):
+                        ch = ch_data["data"][0]
+                        status.update({
+                            "title": ch.get("title", ""),
+                            "game": ch.get("game_name", "")
+                        })
+        except httpx.HTTPStatusError as e:
+            # Ошибка авторизации или серверов платформы
+            from app.utils.logger import logger
+            logger.error(f"Twitch API вернул статус {e.response.status_code}")
+        except Exception as e:
+            from app.utils.logger import logger
+            logger.error(f"Ошибка соединения с Twitch: {e}")
+
         return status
 
     async def set_title(self, title: str) -> str:

@@ -14,21 +14,30 @@ class LiveVKPlugin(BasePlugin):
 
     async def get_status(self):
         status = {"is_live": False, "viewers": 0, "title": "", "game": ""}
-        async with httpx.AsyncClient() as client:
-            url = f"{self.api_base}/channel/{self.owner_id}"
-            resp = await client.get(url, headers=self.headers)
-            if resp.status_code == 200:
-                data = resp.json()
-                stream = data.get("stream")
-                if stream and stream.get("isOnline"):
-                    status.update({
-                        "is_live": True,
-                        "viewers": stream.get("viewers", 0),
-                        "title": stream.get("title", data.get("title", "")),
-                        "game": stream.get("category", {}).get("name", "")
-                    })
-                else:
-                    status["title"] = data.get("title", "")
+        try:
+            async with httpx.AsyncClient() as client:
+                url = f"{self.api_base}/channel/{self.owner_id}"
+                resp = await client.get(url, headers=self.headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    stream = data.get("stream")
+                    if stream and stream.get("isOnline"):
+                        status.update({
+                            "is_live": True,
+                            "viewers": stream.get("viewers", 0),
+                            "title": stream.get("title", data.get("title", "")),
+                            "game": stream.get("category", {}).get("name", "")
+                        })
+                    else:
+                        status["title"] = data.get("title", "")
+
+        except httpx.HTTPStatusError as e:
+            # Ошибка авторизации или серверов платформы
+            from app.utils.logger import logger
+            logger.error(f"LiveVK API вернул статус {e.response.status_code}")
+        except Exception as e:
+            from app.utils.logger import logger
+            logger.error(f"Ошибка соединения с LiveVK: {e}")
         return status
 
     async def set_title(self, title: str) -> str:

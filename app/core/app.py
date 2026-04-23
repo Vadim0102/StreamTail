@@ -29,11 +29,12 @@ class StreamTailApp:
 
         self.scheduler = Scheduler(self.event_bus, self.plugin_manager)
 
-        # Подготавливаем GUI до старта цикла (синхронно)
+        # GUI создаётся синхронно. Карточки платформ будут добавлены
+        # позже — после события plugins.loaded (см. start_background).
         self.gui = StreamTailGUI(self)
 
     async def start_background(self):
-        """Асинхронная задача, которая запускается вместе с GUI"""
+        """Асинхронная задача, запускаемая вместе с GUI."""
         logger.info("Инициализация сервисов и загрузка плагинов...")
         self.plugin_manager.load_plugins()
 
@@ -43,10 +44,16 @@ class StreamTailApp:
                 plugin.enable()
                 logger.info(f"✅ Платформа активирована: {name}")
 
+        # Оповещаем GUI: плагины готовы — можно строить карточки
+        self.event_bus.emit(
+            "plugins.loaded",
+            {"plugins": list(self.plugin_manager.all().keys())},
+        )
+
         interval = self.config.get("app", {}).get("check_interval", 15)
         self.scheduler.start(interval=interval)
 
-        logger.info("GUI запущен. Ожидание действий пользователя.")
+        logger.info("Фоновая инициализация завершена. Ожидание действий пользователя.")
 
     def shutdown(self):
         logger.info("Остановка StreamTail...")
