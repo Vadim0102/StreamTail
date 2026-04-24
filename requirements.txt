@@ -4,3 +4,7 @@ loguru>=0.7.2
 async-tkinter-loop>=0.9.3
 pydantic>=2.7.0
 plyer>=2.1.0
+fastapi>=0.110.0
+uvicorn>=0.29.0
+sv-ttk>=2.6.0
+typer>=0.12.3

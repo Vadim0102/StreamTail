@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import asyncio
+import sv_ttk
 from datetime import datetime
 from app.utils.logger import logger
 
@@ -165,111 +166,99 @@ class StreamTailGUI:
         self.cards: dict[str, PlatformCard] = {}
 
         self.root = tk.Tk()
-        self.root.title(
-            f"StreamTail v{app_core.config['app']['version']} — Stream Manager"
-        )
-        self.root.geometry("900x560")
-        self.root.minsize(720, 480)
+        self.root.title(f"StreamTail v{app_core.config['app']['version']} — Stream Manager")
+        self.root.geometry("950x600")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self._set_theme()
         self._build_ui()
         self._subscribe_events()
 
-    # ── Тема ──────────────────────────────────────────────────────────────────
-
     def _set_theme(self):
-        style = ttk.Style()
-        if "clam" in style.theme_names():
-            style.theme_use("clam")
-
-        style.configure("TLabelframe", font=("Segoe UI", 10, "bold"))
-        style.configure("TLabelframe.Label", foreground="#0056b3")
-        style.configure(
-            "Master.TButton",
-            font=("Segoe UI", 10, "bold"),
-            background="#007bff",
-            foreground="white",
-        )
-        style.configure("TNotebook.Tab", font=("Segoe UI", 9), padding=(10, 4))
-
-    # ── Построение UI ─────────────────────────────────────────────────────────
+        # Применяем современную тёмную тему Sun Valley
+        sv_ttk.set_theme("dark")
 
     def _build_ui(self):
-        # Notebook — вкладки «Дашборд» и «Лог»
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 0))
 
-        # ── Вкладка «Дашборд» ────────────────────────────────────────────────
         self.tab_dashboard = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(self.tab_dashboard, text=" 📺  Дашборд ")
 
-        # Панель массового управления
-        master_frame = ttk.LabelFrame(
-            self.tab_dashboard, text=" ⚡ Массовое управление (все платформы) ", padding=15
-        )
+        master_frame = ttk.LabelFrame(self.tab_dashboard, text=" ⚡ Массовое управление ", padding=15)
         master_frame.pack(fill=tk.X, pady=(0, 12))
 
         ttk.Label(master_frame, text="Общее название:").grid(row=0, column=0, sticky="w")
         self.master_title = tk.StringVar()
-        ttk.Entry(master_frame, textvariable=self.master_title).grid(
-            row=0, column=1, sticky="ew", padx=10, pady=5
-        )
+        ttk.Entry(master_frame, textvariable=self.master_title).grid(row=0, column=1, sticky="ew", padx=10, pady=5)
 
         ttk.Label(master_frame, text="Общая категория:").grid(row=1, column=0, sticky="w")
         self.master_game = tk.StringVar()
         ttk.Combobox(
-            master_frame,
-            textvariable=self.master_game,
-            values=self.app_core.game_service.get_favorites(),
+            master_frame, textvariable=self.master_game, values=self.app_core.game_service.get_favorites()
         ).grid(row=1, column=1, sticky="ew", padx=10, pady=5)
 
-        # Кнопка сохранения игры в базу
-        self.btn_save_game = ttk.Button(
-            master_frame,
-            text="💾 В избранное",
-            command=self.save_game_to_favorites
-        )
-        self.btn_save_game.grid(row=1, column=2, sticky="ew", padx=5, pady=5)
+        # Кнопка добавления в избранное
+        ttk.Button(master_frame, text="💾 В избранное", command=self.save_game_to_favorites).grid(row=1, column=2, padx=5, pady=5)
 
-        self.btn_apply_all = ttk.Button(
-            master_frame,
-            text="⚡ ПРИМЕНИТЬ КО ВСЕМ",
-            style="Master.TButton",
-            command=self.on_apply_all,
-        )
-        self.btn_apply_all.grid(
-            row=0, column=3, rowspan=2, sticky="nsew", padx=5, pady=5, ipadx=10
-        )
+        # Кнопка ПОИСКА
+        ttk.Button(master_frame, text="🔍 Найти игру", command=self.open_search_dialog).grid(row=1, column=3, padx=5, pady=5)
+
+        self.btn_apply_all = ttk.Button(master_frame, text="⚡ ПРИМЕНИТЬ КО ВСЕМ", command=self.on_apply_all)
+        self.btn_apply_all.grid(row=0, column=2, columnspan=2, sticky="nsew", padx=5, pady=5)
         master_frame.columnconfigure(1, weight=1)
 
-        # Контейнер для карточек платформ (заполняется после plugins.loaded)
         self.dash_frame = ttk.Frame(self.tab_dashboard)
         self.dash_frame.pack(fill=tk.BOTH, expand=True)
-
-        # Заглушка «загрузка»
-        self.loading_label = ttk.Label(
-            self.dash_frame,
-            text="⏳  Загрузка платформ...",
-            font=("Segoe UI", 12),
-            foreground="#888",
-        )
+        self.loading_label = ttk.Label(self.dash_frame, text="⏳ Загрузка...", font=("Segoe UI", 12))
         self.loading_label.pack(expand=True)
 
-        # ── Вкладка «Лог» ────────────────────────────────────────────────────
         self.tab_log = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(self.tab_log, text=" 📋  Лог событий ")
         self.log_panel = EventLogPanel(self.tab_log)
         self.log_panel.pack(fill=tk.BOTH, expand=True)
 
-        # ── Статус-бар ───────────────────────────────────────────────────────
         status_frame = ttk.Frame(self.root)
         status_frame.pack(fill=tk.X, side=tk.BOTTOM, padx=10, pady=4)
-        self.status_label = ttk.Label(
-            status_frame, text=" Готов к работе", foreground="#555"
-        )
+        self.status_label = ttk.Label(status_frame, text=" Готов к работе")
         self.status_label.pack(side=tk.LEFT)
-        ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(fill=tk.X, side=tk.BOTTOM)
+
+    def open_search_dialog(self):
+        """Всплывающее окно поиска игр."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Поиск игры (через Twitch)")
+        dialog.geometry("350x400")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        query_var = tk.StringVar()
+        ttk.Entry(dialog, textvariable=query_var).pack(fill=tk.X, padx=10, pady=10)
+        listbox = tk.Listbox(dialog, font=("Segoe UI", 10), background="#2a2a2a", foreground="white")
+        listbox.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        async def do_search():
+            q = query_var.get()
+            listbox.delete(0, tk.END)
+            listbox.insert(tk.END, "Поиск...")
+            results = await self.app_core.game_service.search_games(q)
+            listbox.delete(0, tk.END)
+            if not results:
+                listbox.insert(tk.END, "Ничего не найдено")
+            for r in results:
+                listbox.insert(tk.END, r)
+
+        ttk.Button(dialog, text="Искать", command=lambda: asyncio.create_task(do_search())).pack(fill=tk.X, padx=10)
+
+        def on_select():
+            sel = listbox.curselection()
+            if sel:
+                val = listbox.get(sel[0])
+                if val not in ["Поиск...", "Ничего не найдено"]:
+                    self.master_game.set(val)
+                    self.save_game_to_favorites()
+                    dialog.destroy()
+
+        ttk.Button(dialog, text="Выбрать и закрыть", command=on_select).pack(fill=tk.X, padx=10, pady=10)
 
     # ── Динамическая загрузка карточек ────────────────────────────────────────
 

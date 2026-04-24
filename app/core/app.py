@@ -10,6 +10,7 @@ from app.core.service_container import container
 from app.utils.config import load_config
 from app.utils.logger import logger
 from app.ui.desktop.main_window import StreamTailGUI
+from app.ui.web.api import start_web_server
 
 
 class StreamTailApp:
@@ -18,9 +19,9 @@ class StreamTailApp:
         self.event_bus = EventBus()
         self.plugin_manager = PluginManager(self.config)
 
-        # Инициализация сервисов (IoC)
+        # Передаем plugin_manager в GameService для работы поиска!
         self.stream_service = StreamService(self.plugin_manager)
-        self.game_service = GameService(self.config)
+        self.game_service = GameService(self.config, self.plugin_manager)
         self.notification_service = NotificationService(self.event_bus)
 
         container.register("stream", self.stream_service)
@@ -28,32 +29,25 @@ class StreamTailApp:
         container.register("config", self.config)
 
         self.scheduler = Scheduler(self.event_bus, self.plugin_manager)
-
-        # GUI создаётся синхронно. Карточки платформ будут добавлены
-        # позже — после события plugins.loaded (см. start_background).
         self.gui = StreamTailGUI(self)
 
     async def start_background(self):
-        """Асинхронная задача, запускаемая вместе с GUI."""
         logger.info("Инициализация сервисов и загрузка плагинов...")
         self.plugin_manager.load_plugins()
 
+        # Запуск Web API
+        start_web_server(self)
+
+        # Активация плагинов
         platform_config = self.config.get("platforms", {})
         for name, plugin in self.plugin_manager.all().items():
             if platform_config.get(name.lower(), {}).get("enabled", True):
                 plugin.enable()
-                logger.info(f"✅ Платформа активирована: {name}")
 
-        # Оповещаем GUI: плагины готовы — можно строить карточки
-        self.event_bus.emit(
-            "plugins.loaded",
-            {"plugins": list(self.plugin_manager.all().keys())},
-        )
+        self.event_bus.emit("plugins.loaded", {"plugins": list(self.plugin_manager.all().keys())})
 
-        interval = self.config.get("app", {}).get("check_interval", 15)
-        self.scheduler.start(interval=interval)
-
-        logger.info("Фоновая инициализация завершена. Ожидание действий пользователя.")
+        self.scheduler.start(interval=self.config.get("app", {}).get("check_interval", 15))
+        logger.info("Фоновая инициализация завершена.")
 
     def shutdown(self):
         logger.info("Остановка StreamTail...")
