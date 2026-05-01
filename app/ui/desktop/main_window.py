@@ -1,9 +1,19 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import asyncio
+import threading
 import sv_ttk
 from datetime import datetime
 from app.utils.logger import logger
+from app.ui.desktop.auth_tab import AuthTab
+
+try:
+    import pystray
+    from PIL import Image, ImageDraw
+    TRAY_SUPPORTED = True
+except ImportError:
+    TRAY_SUPPORTED = False
+    logger.warning("pystray не установлен. Функции системного трея отключены.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -163,19 +173,23 @@ class EventLogPanel(ttk.Frame):
 class StreamTailGUI:
     def __init__(self, app_core):
         self.app_core = app_core
-        self.cards: dict[str, PlatformCard] = {}
+        self.cards = {}
+
+        self._loop = asyncio.get_event_loop()
 
         self.root = tk.Tk()
         self.root.title(f"StreamTail v{app_core.config['app']['version']} — Stream Manager")
-        self.root.geometry("950x600")
-        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.geometry("950x650")
+
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close_window)
 
         self._set_theme()
         self._build_ui()
         self._subscribe_events()
 
+        self.tray_icon = None
+
     def _set_theme(self):
-        # Применяем современную тёмную тему Sun Valley
         sv_ttk.set_theme("dark")
 
     def _build_ui(self):
@@ -213,6 +227,11 @@ class StreamTailGUI:
         self.loading_label = ttk.Label(self.dash_frame, text="⏳ Загрузка...", font=("Segoe UI", 12))
         self.loading_label.pack(expand=True)
 
+        # Вкладка 2: Авторизация (НОВОЕ)
+        self.tab_auth = AuthTab(self.notebook, self.app_core)
+        self.notebook.add(self.tab_auth, text=" 🔑  Авторизация ")
+
+        # Вкладка 3: Лог
         self.tab_log = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(self.tab_log, text=" 📋  Лог событий ")
         self.log_panel = EventLogPanel(self.tab_log)
@@ -263,10 +282,18 @@ class StreamTailGUI:
     # ── Динамическая загрузка карточек ────────────────────────────────────────
 
     def _build_platform_cards(self):
-        """Вызывается после plugins.loaded — строит карточки для активных платформ."""
-        self.loading_label.destroy()
+        """Вызывается после загрузки плагинов или успешной авторизации."""
+        # 1. Уничтожаем загрузочный текст, если он есть
+        if hasattr(self, 'loading_label') and self.loading_label.winfo_exists():
+            self.loading_label.destroy()
+
+        # 2. ОЧИЩАЕМ старые карточки (иначе они накладываются друг на друга)
+        for widget in self.dash_frame.winfo_children():
+            widget.destroy()
+        self.cards.clear()
 
         col = 0
+        # 3. Строим карточки заново
         for name, plugin in self.app_core.plugin_manager.all().items():
             if plugin.enabled:
                 card = PlatformCard(self.dash_frame, name, self.app_core)
@@ -275,18 +302,17 @@ class StreamTailGUI:
                 self.cards[name] = card
                 col += 1
 
+        # 4. Если нет платформ — показываем предупреждение
         if col == 0:
             ttk.Label(
                 self.dash_frame,
-                text="⚠️  Нет активных платформ.\nПроверьте config/app.yaml",
+                text="⚠️  Нет активных платформ.\nВозможно, ошибка в коде плагинов.",
                 font=("Segoe UI", 11),
                 foreground="#dc3545",
                 justify=tk.CENTER,
             ).pack(expand=True)
-            self.log_panel.append("Нет активных платформ — проверьте config/app.yaml", "warn")
+            self.log_panel.append("Платформы не загружены", "warn")
         else:
-            platforms_str = ", ".join(self.cards.keys())
-            self.log_panel.append(f"Загружены платформы: {platforms_str}", "info")
             self._set_status(f"Активных платформ: {col}")
 
     def save_game_to_favorites(self):
@@ -390,5 +416,55 @@ class StreamTailGUI:
         self.status_label.config(text=f" {text}")
 
     def _on_close(self):
+        self.app_core.shutdown()
+        self.root.destroy()
+
+    # ── Работа с треем (НОВОЕ) ────────────────────────────────────────────────
+
+    def _on_close_window(self):
+        """Обрабатывает нажатие 'Крестика'."""
+        if TRAY_SUPPORTED:
+            self.root.withdraw()  # Скрываем окно
+            self._show_tray_icon()
+            self.log_panel.append("Приложение свернуто в системный трей.", "info")
+            if hasattr(self.app_core, "notification_service"):
+                self.app_core.notification_service._show_toast("StreamTail работает в фоне")
+        else:
+            self._quit_app()
+
+    def _create_tray_image(self):
+        """Создает простую заглушку-иконку для трея."""
+        image = Image.new('RGB', (64, 64), color=(14, 14, 26))
+        dc = ImageDraw.Draw(image)
+        dc.ellipse((16, 16, 48, 48), fill=(166, 227, 161))
+        return image
+
+    def _show_tray_icon(self):
+        if self.tray_icon:
+            return
+
+        def show_window(icon, item):
+            icon.stop()
+            self.tray_icon = None
+            # ИЗМЕНЕНО: потокобезопасный вызов для разворачивания окна!
+            self._loop.call_soon_threadsafe(self.root.deiconify)
+
+        def quit_app(icon, item):
+            icon.stop()
+            # ИЗМЕНЕНО: потокобезопасный вызов для выхода!
+            self._loop.call_soon_threadsafe(self._quit_app)
+
+        menu = pystray.Menu(
+            pystray.MenuItem('Открыть StreamTail', show_window, default=True),
+            pystray.MenuItem('Выход', quit_app)
+        )
+
+        image = self._create_tray_image()
+        self.tray_icon = pystray.Icon("StreamTail", image, "StreamTail", menu)
+
+        threading.Thread(target=self.tray_icon.run, daemon=True).start()
+
+    def _quit_app(self):
+        logger.info("Закрытие приложения...")
         self.app_core.shutdown()
         self.root.destroy()

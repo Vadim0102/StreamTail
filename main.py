@@ -8,25 +8,21 @@ from async_tkinter_loop import async_mainloop
 def main():
     logger.info("Запуск StreamTail...")
 
-    # Для Windows обязательно ставим правильную политику до создания цикла
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+    # ИЗМЕНЕНО: Правильная инициализация event loop без Warning'ов
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
-    # Инициализируем ядро и GUI (пока синхронно)
+    # Инициализируем ядро и GUI
     app = StreamTailApp()
 
-    # Планируем фоновую задачу загрузки плагинов.
-    # Она начнет выполняться сразу, как только async_mainloop запустит цикл.
+    # Планируем фоновую задачу загрузки плагинов
     loop.create_task(app.start_background())
 
     try:
-        # async_mainloop блокирует поток, запускает asyncio и Tkinter одновременно!
+        # Запуск Tkinter + asyncio
         async_mainloop(app.gui.root)
     except KeyboardInterrupt:
         logger.warning("Приложение завершено пользователем (Ctrl+C).")

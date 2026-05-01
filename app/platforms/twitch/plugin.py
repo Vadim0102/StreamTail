@@ -1,14 +1,29 @@
 import httpx
 from app.plugins.base import BasePlugin
+from app.auth.token_store import get_token
+from app.utils.logger import logger
 
 class TwitchPlugin(BasePlugin):
     def __init__(self, config=None):
         super().__init__(config)
         self.client_id = self.config.get("client_id")
-        self.token = self.config.get("token")
-        self.broadcaster_id = self.config.get("broadcaster_id")
-        self.headers = {
-            "Client-Id": self.client_id,
+
+    @property
+    def token_data(self):
+        return get_token("twitch") or {}
+
+    @property
+    def token(self):
+        return self.token_data.get("access_token")
+
+    @property
+    def broadcaster_id(self):
+        return self.token_data.get("broadcaster_id") or self.config.get("broadcaster_id")
+
+    @property
+    def headers(self):
+        return {
+            "Client-Id": self.token_data.get("client_id", self.client_id),
             "Authorization": f"Bearer {self.token}"
         }
 
@@ -22,11 +37,14 @@ class TwitchPlugin(BasePlugin):
 
     async def get_status(self):
         status = {"is_live": False, "viewers": 0, "title": "", "game": ""}
+        if not self.token or not self.broadcaster_id:
+            return status
+
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 url = f"https://api.twitch.tv/helix/streams?user_id={self.broadcaster_id}"
                 resp = await client.get(url, headers=self.headers)
-                resp.raise_for_status()  # Важно! Бросит исключение при 401, 500 и тд.
+                resp.raise_for_status()
                 data = resp.json()
 
                 if data.get("data"):
@@ -38,7 +56,6 @@ class TwitchPlugin(BasePlugin):
                         "game": stream.get("game_name", "")
                     })
                 else:
-                    # Фоллбэк на канал
                     url_ch = f"https://api.twitch.tv/helix/channels?broadcaster_id={self.broadcaster_id}"
                     resp_ch = await client.get(url_ch, headers=self.headers)
                     ch_data = resp_ch.json()
@@ -48,23 +65,19 @@ class TwitchPlugin(BasePlugin):
                             "title": ch.get("title", ""),
                             "game": ch.get("game_name", "")
                         })
-        except httpx.HTTPStatusError as e:
-            # Ошибка авторизации или серверов платформы
-            from app.utils.logger import logger
-            logger.error(f"Twitch API вернул статус {e.response.status_code}")
         except Exception as e:
-            from app.utils.logger import logger
-            logger.error(f"Ошибка соединения с Twitch: {e}")
-
+            logger.error(f"Ошибка статуса Twitch: {e}")
         return status
 
     async def set_title(self, title: str) -> str:
+        if not self.token: return "Twitch: Нет токена"
         async with httpx.AsyncClient() as client:
             url = f"https://api.twitch.tv/helix/channels?broadcaster_id={self.broadcaster_id}"
             resp = await client.patch(url, headers=self.headers, json={"title": title})
             return "Twitch: Заголовок изменен" if resp.status_code == 204 else f"Twitch Ошибка: {resp.text}"
 
     async def set_game(self, game: str) -> str:
+        if not self.token: return "Twitch: Нет токена"
         async with httpx.AsyncClient() as client:
             game_id = await self._get_game_id(game, client)
             if not game_id:

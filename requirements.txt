@@ -8,3 +8,5 @@ fastapi>=0.110.0
 uvicorn>=0.29.0
 sv-ttk>=2.6.0
 typer>=0.12.3
+pystray>=0.19.3
+Pillow>=10.2.0
