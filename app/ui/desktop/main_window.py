@@ -297,8 +297,10 @@ class StreamTailGUI:
                                                                                             pady=5)
 
         self.btn_apply_all = ttk.Button(master_frame, text="⚡ ПРИМЕНИТЬ КО ВСЕМ", command=self.on_apply_all)
-        self.btn_apply_all.grid(row=0, column=2, columnspan=2, sticky="nsew", padx=5, pady=5)
-        master_frame.columnconfigure(1, weight=1)
+        self.btn_apply_all.grid(row=0, column=2, columnspan=2, sticky="ew", padx=5, pady=5)
+
+        self.btn_refresh_now = ttk.Button(master_frame, text="🔁 Обновить статусы", command=self.on_force_refresh)
+        self.btn_refresh_now.grid(row=1, column=2, padx=5, pady=5, sticky="ew")
 
         self.dash_frame = ttk.Frame(self.tab_dashboard)
         self.dash_frame.pack(fill=tk.BOTH, expand=True)
@@ -441,6 +443,33 @@ class StreamTailGUI:
         self.btn_apply_all.config(state="disabled")
         self._set_status("Выполняется массовое обновление...")
         asyncio.create_task(self._apply_all_async())
+
+    def on_force_refresh(self):
+        """Обработчик нажатия на кнопку ручного обновления."""
+        self.btn_refresh_now.config(state="disabled")
+        self._set_status("Выполняется принудительный опрос платформ...")
+        asyncio.create_task(self._force_refresh_async())
+
+    async def _force_refresh_async(self):
+        try:
+            tasks = []
+            for name, plugin in self.app_core.plugin_manager.all().items():
+                if plugin.enabled:
+                    async def single_update(p_name=name, p_plugin=plugin):
+                        try:
+                            status = await p_plugin.get_status()
+                            status["platform"] = p_name
+                            self.app_core.event_bus.emit("stream.status_checked", status)
+                        except Exception as e:
+                            logger.debug(f"Ошибка ручного обновления {p_name}: {e!r}")
+
+                    tasks.append(single_update())
+
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            self.btn_refresh_now.config(state="normal")
+            self._set_status("Статусы платформ обновлены")
 
     async def _apply_all_async(self):
         try:

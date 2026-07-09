@@ -8,6 +8,7 @@ _settings_cache = {}
 _tokens_cache = {}
 _db_initialized = False
 
+
 def init_db():
     global _db_initialized
     if _db_initialized:
@@ -15,22 +16,36 @@ def init_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+
+    # Включаем WAL режим записи для ускорения дисковых операций и обхода блокировок при конкурентной записи
+    cursor.execute("PRAGMA journal_mode=WAL")
+
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT
-        )
-    """)
+                   CREATE TABLE IF NOT EXISTS settings
+                   (
+                       key
+                       TEXT
+                       PRIMARY
+                       KEY,
+                       value
+                       TEXT
+                   )
+                   """)
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS tokens (
-            platform TEXT PRIMARY KEY,
-            token_data TEXT
-        )
-    """)
+                   CREATE TABLE IF NOT EXISTS tokens
+                   (
+                       platform
+                       TEXT
+                       PRIMARY
+                       KEY,
+                       token_data
+                       TEXT
+                   )
+                   """)
     conn.commit()
     conn.close()
 
-    # Предварительное кэширование и дешифрование при запуске приложения
+    # Предварительное кэширование
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT key, value FROM settings")
@@ -42,7 +57,6 @@ def init_db():
             except Exception:
                 _settings_cache[r[0]] = decrypted
         else:
-            # Резервный случай для нешифрованных записей
             try:
                 _settings_cache[r[0]] = json.loads(r[1])
             except Exception:
@@ -64,9 +78,11 @@ def init_db():
     conn.close()
     _db_initialized = True
 
+
 def get_setting(key: str, default=None):
     init_db()
     return _settings_cache.get(key, default)
+
 
 def set_setting(key: str, value):
     init_db()
@@ -79,9 +95,11 @@ def set_setting(key: str, value):
     conn.commit()
     conn.close()
 
+
 def get_token(platform: str) -> dict | None:
     init_db()
     return _tokens_cache.get(platform)
+
 
 def set_token(platform: str, data: dict):
     init_db()
@@ -93,6 +111,7 @@ def set_token(platform: str, data: dict):
     cursor.execute("INSERT OR REPLACE INTO tokens (platform, token_data) VALUES (?, ?)", (platform, encrypted_val))
     conn.commit()
     conn.close()
+
 
 def clear_token(platform: str):
     init_db()

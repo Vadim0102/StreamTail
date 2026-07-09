@@ -1,6 +1,7 @@
 import asyncio
 from app.utils.logger import logger
 
+
 class Scheduler:
     def __init__(self, event_bus, plugin_manager):
         self.event_bus = event_bus
@@ -23,14 +24,25 @@ class Scheduler:
 
     async def _loop(self, interval: int):
         while self.running:
-            # Считываем интервал динамически на случай изменений в UI
             current_interval = self.plugin_manager.config.get("app", {}).get("check_interval", interval)
+
+            # Собираем задачи параллельного опроса всех активных плагинов
+            tasks = []
             for name, plugin in self.plugin_manager.all().items():
                 if plugin.enabled:
-                    try:
-                        status = await plugin.get_status()
-                        status["platform"] = name
-                        self.event_bus.emit("stream.status_checked", status)
-                    except Exception as e:
-                        logger.error(f"Ошибка проверки статуса {name}: {e}")
+                    # Изолированная задача для каждого отдельного плагина
+                    async def check_single(p_name=name, p_plugin=plugin):
+                        try:
+                            status = await p_plugin.get_status()
+                            status["platform"] = p_name
+                            self.event_bus.emit("stream.status_checked", status)
+                        except Exception as e:
+                            logger.error(f"Ошибка проверки статуса {p_name}: {e!r}")
+
+                    tasks.append(check_single())
+
+            if tasks:
+                # Запускаем все проверки параллельно (Глубокая асинхронность)
+                await asyncio.gather(*tasks, return_exceptions=True)
+
             await asyncio.sleep(current_interval)
