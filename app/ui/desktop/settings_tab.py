@@ -51,9 +51,10 @@ class CollapsibleInstruction(ttk.Frame):
             "   • Перейдите в настройки своего профиля GoodGame -> вкладка OAuth / Разработчикам.\n"
             "   • Зарегистрируйте приложение, указав Redirect URI: http://localhost:19234/callback\n"
             "   • Скопируйте Client ID и Client Secret. Внимание: scope указывать не нужно.\n\n"
-            "🇷🇺 5. RUTUBE:\n"
-            "   • Для отслеживания статуса трансляции (get_status) достаточно указать ID Канала (публично).\n"
-            "   • Внимание: для отправки названия и игры (set_title/set_game) требуется персональный Studio API Token, выдаваемый исключительно технической поддержкой RUTUBE.\n\n"
+            "🇷🇺 5. RUTUBE (Обход блокировок QRATOR):\n"
+            "   • ID Канала: Достаточно указать имя канала (публично) для чтения онлайна.\n"
+            "   • ID Стрима: Скопируйте уникальный ID из адресной страницы страницы трансляции в Студии (например, 'f290551824869de96ec29760e731385d' из ссылки https://studio.rutube.ru/stream/f290551824869de96ec29760e731385d).\n"
+            "   • Токен: Выгрузите куки RUTUBE через Cookie Quick Manager (JSON) или Get cookies.txt LOCALLY (Netscape) и вставьте весь скопированный текст целиком в поле Токен. Плагин автоматически обнаружит куки, вытащит необходимые CSRF-токены защиты и сможет менять заголовки в обход Cloudflare!\n\n"
             "💚 6. KICK:\n"
             "   • Имя канала: введите имя. Если случайно ввели ссылку, плагин очистит её сам.\n"
             "   • Токен (Два метода на выбор):\n"
@@ -81,19 +82,36 @@ class SettingsTab(ttk.Frame):
         self._build_ui()
 
     def _build_ui(self):
-        canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0, background="#1e1e2e")
-        scrollbar = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
-        self.scrollable_frame = ttk.Frame(canvas, padding=10)
+        # 1. Закрепленный нижний бар (Bottom Bar) для кнопки Сохранить (она всегда прижата к низу)
+        bottom_bar = ttk.Frame(self, padding=(0, 10, 0, 0))
+        bottom_bar.pack(side="bottom", fill="x")
 
+        self.btn_save = ttk.Button(bottom_bar, text="💾 Сохранить настройки", command=self.save_settings)
+        self.btn_save.pack(fill="x")
+
+        # 2. Создаем независимую скроллируемую область для полей настроек (без жесткого цвета фона)
+        self.canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.scrollable_frame = ttk.Frame(self.canvas, padding=10)
+
+        # Регулируем размер прокрутки
         self.scrollable_frame.bind(
             "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         )
-        canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Сохраняем окно холста
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+
+        # УЛУЧШЕНИЕ: Растягиваем внутренний фрейм настроек на ВСЮ ширину при изменении размера окна!
+        self.canvas.bind(
+            "<Configure>",
+            lambda e: self.canvas.itemconfig(self.canvas_window, width=e.width)
+        )
 
         scrollbar.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
+        self.canvas.pack(side="left", fill="both", expand=True)
 
         ttk.Label(
             self.scrollable_frame,
@@ -101,7 +119,7 @@ class SettingsTab(ttk.Frame):
             font=("Segoe UI", 16, "bold")
         ).pack(anchor="w", pady=(0, 10))
 
-        # Развертываемая инструкция в самом верху
+        # Развертываемая инструкция
         self.instructions = CollapsibleInstruction(self.scrollable_frame)
         self.instructions.pack(fill="x", pady=(0, 15))
 
@@ -125,13 +143,29 @@ class SettingsTab(ttk.Frame):
         self.entry_interval = ttk.Entry(check_frame, textvariable=self.interval_var, width=10)
         self.entry_interval.pack(side="left", padx=10)
 
-        # ДОБАВЛЕНО ПОЛЕ ВВОДА ПРОКСИ
+        # Поле ввода Прокси
         proxy_frame = ttk.Frame(app_frame)
         proxy_frame.pack(fill="x", pady=5)
         ttk.Label(proxy_frame, text="Глобальный прокси-сервер (http/socks5):").pack(side="left")
         self.proxy_var = tk.StringVar(value=str(self.app_core.config["app"].get("proxy_url", "")))
         self.entry_proxy = ttk.Entry(proxy_frame, textvariable=self.proxy_var, width=35)
         self.entry_proxy.pack(side="left", padx=10)
+
+        # Выбор темы оформления
+        theme_frame = ttk.Frame(app_frame)
+        theme_frame.pack(fill="x", pady=5)
+        ttk.Label(theme_frame, text="Тема оформления интерфейса:").pack(side="left")
+
+        from app.utils import theme_manager
+        self.theme_var = tk.StringVar(value=theme_manager.get_current_theme_name())
+        self.combo_theme = ttk.Combobox(
+            theme_frame,
+            textvariable=self.theme_var,
+            values=list(theme_manager.THEMES.keys()),
+            state="readonly",
+            width=25
+        )
+        self.combo_theme.pack(side="left", padx=10)
 
         # --- Настройки платформ ---
         self.platform_entries = {}
@@ -187,10 +221,27 @@ class SettingsTab(ttk.Frame):
                 self.platform_entries[plat_name][key] = var
                 row += 1
 
-        btn_save = ttk.Button(self.scrollable_frame, text="💾 Сохранить настройки", command=self.save_settings)
-        btn_save.pack(fill="x", pady=15)
+        # КЛЮЧЕВОЕ УЛУЧШЕНИЕ: Рекурсивно привязываем прокрутку колесика мыши ко всем элементам!
+        self._bind_mouse_wheel(self)
+
+    def _on_mouse_wheel(self, event):
+        """Кроссплатформенный обработчик прокрутки колесика мыши."""
+        if event.num == 5 or event.delta < 0:
+            self.canvas.yview_scroll(1, "units")
+        elif event.num == 4 or event.delta > 0:
+            self.canvas.yview_scroll(-1, "units")
+
+    def _bind_mouse_wheel(self, widget):
+        """Рекурсивно биндит события прокрутки мыши на все вложенные элементы формы."""
+        widget.bind("<MouseWheel>", self._on_mouse_wheel, add="+")
+        widget.bind("<Button-4>", self._on_mouse_wheel, add="+")
+        widget.bind("<Button-5>", self._on_mouse_wheel, add="+")
+        for child in widget.winfo_children():
+            self._bind_mouse_wheel(child)
 
     def save_settings(self):
+        # Блокируем кнопку сохранения для защиты от дребезга и двойных кликов!
+        self.btn_save.config(state="disabled")
         try:
             try:
                 check_interval = int(self.interval_var.get().strip())
@@ -204,9 +255,11 @@ class SettingsTab(ttk.Frame):
 
             new_config = dict(self.app_core.config)
             new_config["app"]["check_interval"] = check_interval
-
-            new_config["app"]["check_interval"] = check_interval
             new_config["app"]["proxy_url"] = self.proxy_var.get().strip()
+
+            # СОХРАНЯЕМ ТЕМУ ОФОРМЛЕНИЯ
+            selected_theme = self.theme_var.get()
+            db.set_setting("theme_name", selected_theme)
 
             for plat_name, vars_dict in self.platform_entries.items():
                 if plat_name not in new_config["platforms"]:
@@ -220,6 +273,12 @@ class SettingsTab(ttk.Frame):
                         plat_cfg[key] = var.get().strip()
 
             self.app_core.update_app_config(new_config)
+
+            # Динамически применяем тему ко всем открытым окнам на лету!
+            from app.utils import theme_manager
+            theme_manager.apply_theme(self.app_core.gui.root)
+            self.app_core.gui.apply_theme_to_custom_widgets()
+
             messagebox.showinfo("Успех", "Настройки успешно обновлены!")
             self.app_core.event_bus.emit("plugins.loaded", {})
 
@@ -228,3 +287,5 @@ class SettingsTab(ttk.Frame):
 
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось сохранить настройки: {e}")
+        finally:
+            self.btn_save.config(state="normal")

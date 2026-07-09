@@ -62,7 +62,11 @@ class PlatformCard(ttk.LabelFrame):
     def update_data(self, data: dict):
         is_live = data.get("is_live", False)
         status_text = "🟢 В ЭФИРЕ" if is_live else "🔴 ОФФЛАЙН"
-        color = "#28a745" if is_live else "#dc3545"
+
+        # Получаем контрастные цвета из Theme Manager
+        from app.utils import theme_manager
+        colors = theme_manager.get_theme_colors()
+        color = colors["text_green"] if is_live else colors["text_red"]
 
         self.lbl_status.config(text=status_text, foreground=color)
         self.lbl_viewers.config(text=f"👁 Зрители: {data.get('viewers', 0)}")
@@ -268,7 +272,9 @@ class StreamTailGUI:
         self.tray_icon = None
 
     def _set_theme(self):
-        sv_ttk.set_theme("dark")
+        # Применяем сохраненную тему из Theme Manager
+        from app.utils import theme_manager
+        theme_manager.apply_theme(self.root)
 
     def _build_ui(self):
         self.notebook = ttk.Notebook(self.root)
@@ -278,9 +284,11 @@ class StreamTailGUI:
         self.tab_dashboard = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(self.tab_dashboard, text=" 📺  Дашборд ")
 
+        # --- Массовое управление ---
         master_frame = ttk.LabelFrame(self.tab_dashboard, text=" ⚡ Массовое управление ", padding=15)
-        master_frame.pack(fill=tk.X, pady=(0, 12))
+        master_frame.pack(fill=tk.X, pady=(0, 12))  # Растягиваем фрейм на всю ширину вровень с карточками
 
+        # Поля ввода
         ttk.Label(master_frame, text="Общее название:").grid(row=0, column=0, sticky="w")
         self.master_title = tk.StringVar()
         ttk.Entry(master_frame, textvariable=self.master_title).grid(row=0, column=1, sticky="ew", padx=10, pady=5)
@@ -291,16 +299,25 @@ class StreamTailGUI:
             master_frame, textvariable=self.master_game, values=self.app_core.game_service.get_favorites()
         ).grid(row=1, column=1, sticky="ew", padx=10, pady=5)
 
-        ttk.Button(master_frame, text="💾 В избранное", command=self.save_game_to_favorites).grid(row=1, column=2,
-                                                                                                 padx=5, pady=5)
-        ttk.Button(master_frame, text="🔍 Найти игру", command=self.open_search_dialog).grid(row=1, column=3, padx=5,
-                                                                                            pady=5)
-
+        # ИСПРАВЛЕНО: Кнопка ПРИМЕНИТЬ КО ВСЕМ теперь красиво растянута над тремя кнопками ниже (колонки 2, 3, 4)
         self.btn_apply_all = ttk.Button(master_frame, text="⚡ ПРИМЕНИТЬ КО ВСЕМ", command=self.on_apply_all)
-        self.btn_apply_all.grid(row=0, column=2, columnspan=2, sticky="ew", padx=5, pady=5)
+        self.btn_apply_all.grid(row=0, column=2, columnspan=3, sticky="ew", padx=5, pady=5)
 
+        # Кнопка добавления в избранное (Колонка 2)
+        ttk.Button(master_frame, text="💾 В избранное", command=self.save_game_to_favorites).grid(row=1, column=2,
+                                                                                                 padx=5, pady=5,
+                                                                                                 sticky="ew")
+
+        # Кнопка ПОИСКА (Колонка 3)
+        ttk.Button(master_frame, text="🔍 Найти игру", command=self.open_search_dialog).grid(row=1, column=3, padx=5,
+                                                                                            pady=5, sticky="ew")
+
+        # Кнопка ОБНОВИТЬ СТАТУСЫ (Колонка 4)
         self.btn_refresh_now = ttk.Button(master_frame, text="🔁 Обновить статусы", command=self.on_force_refresh)
-        self.btn_refresh_now.grid(row=1, column=2, padx=5, pady=5, sticky="ew")
+        self.btn_refresh_now.grid(row=1, column=4, padx=5, pady=5, sticky="ew")
+
+        # Указываем вес колонке с полями ввода, чтобы она занимала все свободное пространство
+        master_frame.columnconfigure(1, weight=1)
 
         self.dash_frame = ttk.Frame(self.tab_dashboard)
         self.dash_frame.pack(fill=tk.BOTH, expand=True)
@@ -325,6 +342,41 @@ class StreamTailGUI:
         status_frame.pack(fill=tk.X, side=tk.BOTTOM, padx=10, pady=4)
         self.status_label = ttk.Label(status_frame, text=" Готов к работе")
         self.status_label.pack(side=tk.LEFT)
+
+        # Применяем кастомные цвета темы к текстовым полям логов и инструкций
+        self.apply_theme_to_custom_widgets()
+
+    def apply_theme_to_custom_widgets(self):
+        """Обновляет цвета кастомных виджетов (Text, Canvas) при смене темы."""
+        from app.utils import theme_manager
+        colors = theme_manager.get_theme_colors()
+
+        # Перекрашиваем панель логов событий и настраиваем высокую контрастность логов!
+        if hasattr(self, "log_panel") and self.log_panel.winfo_exists():
+            self.log_panel.text.configure(
+                background=colors["field_bg"],
+                foreground=colors["fg"],
+                insertbackground=colors["fg"],
+                selectbackground=colors["select_bg"]
+            )
+            # Применяем контрастные зеленый, красный и синий цвета к строкам лога!
+            self.log_panel.text.tag_configure("live", foreground=colors["text_green"])
+            self.log_panel.text.tag_configure("offline", foreground=colors["text_red"])
+            self.log_panel.text.tag_configure("info", foreground=colors["text_blue"])
+            self.log_panel.text.tag_configure("warn", foreground=colors["text_sec"])
+
+        # Перекрашиваем текстовую инструкцию и Canvas в настройках
+        if hasattr(self, "tab_settings") and self.tab_settings.winfo_exists():
+            # Окрашиваем Canvas, убирая пустой блок справа!
+            if hasattr(self.tab_settings, "canvas") and self.tab_settings.canvas.winfo_exists():
+                self.tab_settings.canvas.configure(
+                    background=colors["bg"]
+                )
+            if hasattr(self.tab_settings, "instructions") and self.tab_settings.instructions.winfo_exists():
+                self.tab_settings.instructions.text_widget.configure(
+                    background=colors["field_bg"],
+                    foreground=colors["fg"]
+                )
 
     def open_search_dialog(self):
         dialog = tk.Toplevel(self.root)

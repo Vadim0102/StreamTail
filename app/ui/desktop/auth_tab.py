@@ -40,12 +40,21 @@ class AuthTab(ttk.Frame):
             btn.pack(side="right")
 
     def update_statuses(self):
+        from app.utils import theme_manager
+        colors = theme_manager.get_theme_colors()
+
         for name, data in self.platforms.items():
             pid = data["id"]
             if is_token_valid(pid):
-                self.status_labels[pid].config(text="✅ Авторизован (токен действителен)", foreground="#a6e3a1")
+                self.status_labels[pid].config(
+                    text="✅ Авторизован (токен действителен)",
+                    foreground=colors["text_green"]
+                )
             else:
-                self.status_labels[pid].config(text="❌ Не авторизован / Токен истек", foreground="#f38ba8")
+                self.status_labels[pid].config(
+                    text="❌ Не авторизован / Токен истек",
+                    foreground=colors["text_red"]
+                )
 
     def do_auth(self, name, data):
         client_id = self.app_core.config["platforms"].get(data["id"], {}).get("client_id")

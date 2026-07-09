@@ -1,10 +1,29 @@
 # StreamTail 🚀
 
-![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)
+![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.10%2B-green.svg)
 ![License](https://img.shields.io/badge/license-Apache%202.0-lightgrey.svg)
 
 **StreamTail** — современный, асинхронный и высокопроизводительный менеджер трансляций для стримеров. Управляйте статусом, названием и категорией трансляции одновременно на всех популярных платформах в один клик.
+
+## Скриншоты
+
+![Главный экран](assets/main_window.png)
+
+<details>
+<summary>Дополнительные скриншоты</summary>
+
+---
+
+> <p><b>Дополнительные экраны приложения</b></p>
+>
+> ### Настройки
+> ![Поиск](assets/settings_tab.png)
+> 
+> ### Авторизация
+> ![Настройки](assets/auth_tab.png)
+> 
+</details>
 
 ## ✨ Ключевые особенности
 
