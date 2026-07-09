@@ -6,19 +6,19 @@ import sv_ttk
 from datetime import datetime
 from app.utils.logger import logger
 from app.ui.desktop.auth_tab import AuthTab
+from app.ui.desktop.settings_tab import SettingsTab
+from app.utils import db
+from app.core import __version__
 
 try:
     import pystray
     from PIL import Image, ImageDraw
+
     TRAY_SUPPORTED = True
 except ImportError:
     TRAY_SUPPORTED = False
     logger.warning("pystray не установлен. Функции системного трея отключены.")
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Карточка одной платформы
-# ─────────────────────────────────────────────────────────────────────────────
 
 class PlatformCard(ttk.LabelFrame):
     def __init__(self, parent, platform: str, app_core, *args, **kwargs):
@@ -27,7 +27,12 @@ class PlatformCard(ttk.LabelFrame):
         self.app_core = app_core
 
         self.lbl_status = ttk.Label(self, text="Ожидание...", font=("Segoe UI", 11, "bold"))
-        self.lbl_status.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 5))
+        self.lbl_status.grid(row=0, column=0, sticky="w", pady=(0, 5))
+
+        # Кнопка ручного выбора трансляции для YouTube и RUTUBE
+        if self.platform in ("youtube", "rutube"):
+            self.btn_select = ttk.Button(self, text="⚙️ Выбрать стрим", command=self.on_select_broadcast, width=15)
+            self.btn_select.grid(row=0, column=1, sticky="e", pady=(0, 5))
 
         self.lbl_viewers = ttk.Label(self, text="👁 Зрители: —", font=("Segoe UI", 10))
         self.lbl_viewers.grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 15))
@@ -55,7 +60,6 @@ class PlatformCard(ttk.LabelFrame):
         self.columnconfigure(1, weight=1)
 
     def update_data(self, data: dict):
-        """Обновляет отображение. Вызывается ТОЛЬКО из главного потока."""
         is_live = data.get("is_live", False)
         status_text = "🟢 В ЭФИРЕ" if is_live else "🔴 ОФФЛАЙН"
         color = "#28a745" if is_live else "#dc3545"
@@ -63,11 +67,20 @@ class PlatformCard(ttk.LabelFrame):
         self.lbl_status.config(text=status_text, foreground=color)
         self.lbl_viewers.config(text=f"👁 Зрители: {data.get('viewers', 0)}")
 
-        # Не перезаписываем поле, если оно сейчас в фокусе
-        focused = self.focus_get()
+        focused = None
+        try:
+            focused = self.focus_get()
+        except Exception:
+            pass
+
         if focused not in (self.entry_title, self.combo_game):
-            self.title_var.set(data.get("title", self.title_var.get()))
-            self.game_var.set(data.get("game", self.game_var.get()))
+            new_title = data.get("title")
+            if new_title and str(new_title).strip():
+                self.title_var.set(new_title)
+
+            new_game = data.get("game")
+            if new_game and str(new_game).strip():
+                self.game_var.set(new_game)
 
     def on_apply(self):
         self.btn_apply.config(state="disabled")
@@ -94,10 +107,84 @@ class PlatformCard(ttk.LabelFrame):
         finally:
             self.btn_apply.config(state="normal")
 
+    def on_select_broadcast(self):
+        """Всплывающее окно асинхронного выбора трансляций."""
+        dialog = tk.Toplevel(self)
+        dialog.title(f"Выбор трансляции — {self.platform.upper()}")
+        dialog.geometry("500x350")
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Вкладка «Лог событий»
-# ─────────────────────────────────────────────────────────────────────────────
+        lbl_loading = ttk.Label(dialog, text="⏳ Загрузка списка трансляций, пожалуйста подождите...",
+                                font=("Segoe UI", 10))
+        lbl_loading.pack(pady=10)
+
+        listbox = tk.Listbox(dialog, font=("Consolas", 9), background="#2a2a2a", foreground="white")
+        listbox.pack(fill="both", expand=True, padx=15, pady=5)
+
+        broadcasts = []
+
+        async def fetch_and_fill():
+            nonlocal broadcasts
+            plugin = self.app_core.plugin_manager.get(self.platform)
+            if not plugin:
+                lbl_loading.config(text="❌ Ошибка: Плагин платформы не найден")
+                return
+
+            if not plugin.token:
+                lbl_loading.config(text="❌ Нет токена авторизации/кук. Настройте платформу!")
+                return
+
+            if hasattr(plugin, "get_broadcasts"):
+                broadcasts = await plugin.get_broadcasts()
+                lbl_loading.config(text="Выберите нужную трансляцию:")
+                listbox.delete(0, tk.END)
+                if not broadcasts:
+                    listbox.insert(tk.END, "Трансляции не найдены.")
+                for item in broadcasts:
+                    listbox.insert(tk.END, f"[{item['status'].upper()}] {item['title']} (ID: {item['id']})")
+            else:
+                lbl_loading.config(text="❌ Платформа не поддерживает выбор стримов")
+
+        asyncio.create_task(fetch_and_fill())
+
+        def save_selection():
+            sel = listbox.curselection()
+            if sel and broadcasts:
+                idx = sel[0]
+                if idx < len(broadcasts):
+                    selected = broadcasts[idx]
+
+                    config = self.app_core.config
+
+                    if self.platform == "youtube":
+                        from app.auth.token_store import get_token, set_token
+                        tok = get_token("youtube") or {}
+                        tok["broadcast_id"] = selected["id"]
+                        set_token("youtube", tok)
+                    elif self.platform == "rutube":
+                        platform_cfg = config["platforms"].setdefault("rutube", {})
+                        platform_cfg["broadcast_id"] = selected["id"]
+                        self.app_core.update_app_config(config)
+
+                    messagebox.showinfo("Успех", f"Успешно привязана трансляция:\n{selected['title']}")
+                    dialog.destroy()
+
+                    async def trigger_single_update():
+                        plugin = self.app_core.plugin_manager.get(self.platform)
+                        if plugin and plugin.enabled:
+                            try:
+                                status = await plugin.get_status()
+                                status["platform"] = self.platform
+                                self.app_core.event_bus.emit("stream.status_checked", status)
+                            except Exception as ex:
+                                logger.debug(f"Ошибка ручного обновления {self.platform}: {ex!r}")
+
+                    asyncio.create_task(trigger_single_update())
+
+        btn_select = ttk.Button(dialog, text="✅ Выбрать трансляцию", command=save_selection)
+        btn_select.pack(pady=15)
+
 
 class EventLogPanel(ttk.Frame):
     MAX_LINES = 200
@@ -136,7 +223,6 @@ class EventLogPanel(ttk.Frame):
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.text.pack(fill=tk.BOTH, expand=True)
 
-        # Цветовые теги
         self.text.tag_configure("time", foreground="#6c7086")
         self.text.tag_configure("live", foreground="#a6e3a1", font=("Consolas", 9, "bold"))
         self.text.tag_configure("offline", foreground="#f38ba8")
@@ -145,14 +231,11 @@ class EventLogPanel(ttk.Frame):
         self.text.tag_configure("platform", foreground="#cba6f7", font=("Consolas", 9, "bold"))
 
     def append(self, message: str, tag: str = "info"):
-        """Добавляет строку в лог. Потокобезопасен (вызывать из главного потока)."""
         self.text.config(state=tk.NORMAL)
-
         ts = datetime.now().strftime("%H:%M:%S")
         self.text.insert(tk.END, f"[{ts}] ", "time")
         self.text.insert(tk.END, message + "\n", tag)
 
-        # Ограничиваем число строк
         line_count = int(self.text.index(tk.END).split(".")[0])
         if line_count > self.MAX_LINES + 20:
             self.text.delete("1.0", f"{line_count - self.MAX_LINES}.0")
@@ -166,20 +249,15 @@ class EventLogPanel(ttk.Frame):
         self.text.config(state=tk.DISABLED)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Главное окно
-# ─────────────────────────────────────────────────────────────────────────────
-
 class StreamTailGUI:
     def __init__(self, app_core):
         self.app_core = app_core
         self.cards = {}
-
         self._loop = asyncio.get_event_loop()
 
         self.root = tk.Tk()
-        self.root.title(f"StreamTail v{app_core.config['app']['version']} — Stream Manager")
-        self.root.geometry("950x650")
+        self.root.title(f"StreamTail v{__version__} — Stream Manager")
+        self.root.geometry("1000x720")
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close_window)
 
@@ -196,6 +274,7 @@ class StreamTailGUI:
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 0))
 
+        # Вкладка 1: Дашборд
         self.tab_dashboard = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(self.tab_dashboard, text=" 📺  Дашборд ")
 
@@ -212,11 +291,10 @@ class StreamTailGUI:
             master_frame, textvariable=self.master_game, values=self.app_core.game_service.get_favorites()
         ).grid(row=1, column=1, sticky="ew", padx=10, pady=5)
 
-        # Кнопка добавления в избранное
-        ttk.Button(master_frame, text="💾 В избранное", command=self.save_game_to_favorites).grid(row=1, column=2, padx=5, pady=5)
-
-        # Кнопка ПОИСКА
-        ttk.Button(master_frame, text="🔍 Найти игру", command=self.open_search_dialog).grid(row=1, column=3, padx=5, pady=5)
+        ttk.Button(master_frame, text="💾 В избранное", command=self.save_game_to_favorites).grid(row=1, column=2,
+                                                                                                 padx=5, pady=5)
+        ttk.Button(master_frame, text="🔍 Найти игру", command=self.open_search_dialog).grid(row=1, column=3, padx=5,
+                                                                                            pady=5)
 
         self.btn_apply_all = ttk.Button(master_frame, text="⚡ ПРИМЕНИТЬ КО ВСЕМ", command=self.on_apply_all)
         self.btn_apply_all.grid(row=0, column=2, columnspan=2, sticky="nsew", padx=5, pady=5)
@@ -227,11 +305,15 @@ class StreamTailGUI:
         self.loading_label = ttk.Label(self.dash_frame, text="⏳ Загрузка...", font=("Segoe UI", 12))
         self.loading_label.pack(expand=True)
 
-        # Вкладка 2: Авторизация (НОВОЕ)
+        # Вкладка 2: Настройки
+        self.tab_settings = SettingsTab(self.notebook, self.app_core)
+        self.notebook.add(self.tab_settings, text=" ⚙️ Настройки ")
+
+        # Вкладка 3: Авторизация
         self.tab_auth = AuthTab(self.notebook, self.app_core)
         self.notebook.add(self.tab_auth, text=" 🔑  Авторизация ")
 
-        # Вкладка 3: Лог
+        # Вкладка 4: Лог
         self.tab_log = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(self.tab_log, text=" 📋  Лог событий ")
         self.log_panel = EventLogPanel(self.tab_log)
@@ -243,7 +325,6 @@ class StreamTailGUI:
         self.status_label.pack(side=tk.LEFT)
 
     def open_search_dialog(self):
-        """Всплывающее окно поиска игр."""
         dialog = tk.Toplevel(self.root)
         dialog.title("Поиск игры (через Twitch)")
         dialog.geometry("350x400")
@@ -253,7 +334,7 @@ class StreamTailGUI:
         query_var = tk.StringVar()
         ttk.Entry(dialog, textvariable=query_var).pack(fill=tk.X, padx=10, pady=10)
         listbox = tk.Listbox(dialog, font=("Segoe UI", 10), background="#2a2a2a", foreground="white")
-        listbox.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        listbox.pack(fill="both", expand=True, padx=10, pady=5)
 
         async def do_search():
             q = query_var.get()
@@ -279,54 +360,48 @@ class StreamTailGUI:
 
         ttk.Button(dialog, text="Выбрать и закрыть", command=on_select).pack(fill=tk.X, padx=10, pady=10)
 
-    # ── Динамическая загрузка карточек ────────────────────────────────────────
-
     def _build_platform_cards(self):
-        """Вызывается после загрузки плагинов или успешной авторизации."""
-        # 1. Уничтожаем загрузочный текст, если он есть
         if hasattr(self, 'loading_label') and self.loading_label.winfo_exists():
             self.loading_label.destroy()
 
-        # 2. ОЧИЩАЕМ старые карточки (иначе они накладываются друг на друга)
         for widget in self.dash_frame.winfo_children():
             widget.destroy()
         self.cards.clear()
 
         col = 0
-        # 3. Строим карточки заново
+        row = 0
         for name, plugin in self.app_core.plugin_manager.all().items():
             if plugin.enabled:
                 card = PlatformCard(self.dash_frame, name, self.app_core)
-                card.grid(row=0, column=col, sticky="nsew", padx=8, pady=5)
+                card.grid(row=row, column=col, sticky="nsew", padx=8, pady=5)
                 self.dash_frame.columnconfigure(col, weight=1)
                 self.cards[name] = card
                 col += 1
+                if col >= 3:
+                    col = 0
+                    row += 1
 
-        # 4. Если нет платформ — показываем предупреждение
-        if col == 0:
+        if len(self.cards) == 0:
             ttk.Label(
                 self.dash_frame,
-                text="⚠️  Нет активных платформ.\nВозможно, ошибка в коде плагинов.",
+                text="⚠️  Нет активных платформ.\nВключите их в настройках.",
                 font=("Segoe UI", 11),
                 foreground="#dc3545",
                 justify=tk.CENTER,
             ).pack(expand=True)
             self.log_panel.append("Платформы не загружены", "warn")
         else:
-            self._set_status(f"Активных платформ: {col}")
+            self._set_status(f"Активных платформ: {len(self.cards)}")
 
     def save_game_to_favorites(self):
         new_game = self.master_game.get().strip()
         if new_game:
             if self.app_core.game_service.add_favorite(new_game):
-                # Обновляем все combobox'ы
                 games = self.app_core.game_service.get_favorites()
-                # Обновляем в мастере
                 master_cb = \
                 [w for w in self.tab_dashboard.winfo_children()[0].winfo_children() if isinstance(w, ttk.Combobox)][0]
                 master_cb['values'] = games
 
-                # Обновляем в карточках платформ
                 for card in self.cards.values():
                     card.combo_game['values'] = games
 
@@ -334,18 +409,14 @@ class StreamTailGUI:
             else:
                 self.log_panel.append(f"Категория '{new_game}' уже есть в списке.", "info")
 
-    # ── Подписки на события ───────────────────────────────────────────────────
-
     def _subscribe_events(self):
         self.app_core.event_bus.subscribe("plugins.loaded", self._on_plugins_loaded)
         self.app_core.event_bus.subscribe("stream.status_checked", self._on_status_checked)
 
     def _on_plugins_loaded(self, data: dict):
-        """Вызывается из asyncio-loop (главный поток) — безопасно трогать Tkinter."""
         self._build_platform_cards()
 
     def _on_status_checked(self, data: dict):
-        """Вызывается из asyncio-loop (главный поток) — безопасно трогать Tkinter."""
         platform = data.get("platform", "?")
 
         if platform in self.cards:
@@ -365,8 +436,6 @@ class StreamTailGUI:
         self._set_status(
             f"Последнее обновление: {platform} — {'🟢 В ЭФИРЕ' if is_live else '🔴 оффлайн'}"
         )
-
-    # ── Массовое применение ───────────────────────────────────────────────────
 
     def on_apply_all(self):
         self.btn_apply_all.config(state="disabled")
@@ -410,21 +479,13 @@ class StreamTailGUI:
             self.btn_apply_all.config(state="normal")
             self._set_status("Готов к работе")
 
-    # ── Вспомогательные ───────────────────────────────────────────────────────
-
     def _set_status(self, text: str):
         self.status_label.config(text=f" {text}")
 
-    def _on_close(self):
-        self.app_core.shutdown()
-        self.root.destroy()
-
-    # ── Работа с треем (НОВОЕ) ────────────────────────────────────────────────
-
     def _on_close_window(self):
-        """Обрабатывает нажатие 'Крестика'."""
-        if TRAY_SUPPORTED:
-            self.root.withdraw()  # Скрываем окно
+        hide_to_tray = db.get_setting("hide_to_tray", True)
+        if TRAY_SUPPORTED and hide_to_tray:
+            self.root.withdraw()
             self._show_tray_icon()
             self.log_panel.append("Приложение свернуто в системный трей.", "info")
             if hasattr(self.app_core, "notification_service"):
@@ -433,7 +494,6 @@ class StreamTailGUI:
             self._quit_app()
 
     def _create_tray_image(self):
-        """Создает простую заглушку-иконку для трея."""
         image = Image.new('RGB', (64, 64), color=(14, 14, 26))
         dc = ImageDraw.Draw(image)
         dc.ellipse((16, 16, 48, 48), fill=(166, 227, 161))
@@ -446,12 +506,10 @@ class StreamTailGUI:
         def show_window(icon, item):
             icon.stop()
             self.tray_icon = None
-            # ИЗМЕНЕНО: потокобезопасный вызов для разворачивания окна!
             self._loop.call_soon_threadsafe(self.root.deiconify)
 
         def quit_app(icon, item):
             icon.stop()
-            # ИЗМЕНЕНО: потокобезопасный вызов для выхода!
             self._loop.call_soon_threadsafe(self._quit_app)
 
         menu = pystray.Menu(
@@ -461,7 +519,6 @@ class StreamTailGUI:
 
         image = self._create_tray_image()
         self.tray_icon = pystray.Icon("StreamTail", image, "StreamTail", menu)
-
         threading.Thread(target=self.tray_icon.run, daemon=True).start()
 
     def _quit_app(self):

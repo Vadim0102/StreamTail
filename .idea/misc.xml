@@ -3,17 +3,6 @@
   <component name="Black">
     <option name="sdkName" value="Python 3.13 (StreamTail)" />
   </component>
-  <component name="DiscordProjectSettings">
-    <option name="show" value="ASK" />
-    <option name="description" value="" />
-    <option name="applicationTheme" value="default" />
-    <option name="iconsTheme" value="default" />
-    <option name="button1Title" value="" />
-    <option name="button1Url" value="" />
-    <option name="button2Title" value="" />
-    <option name="button2Url" value="" />
-    <option name="customApplicationId" value="" />
-  </component>
   <component name="IntellijSFCCConnectionSettings">
     <option name="sourceScanned" value="true" />
   </component>
@@ -23,5 +12,5 @@
   <component name="IntellijSFCCFileSystemListener">
     <option name="loaded" value="true" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.13 (StreamTail)" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.14 (StreamTail)" project-jdk-type="Python SDK" />
 </project>

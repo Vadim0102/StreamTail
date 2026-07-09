@@ -7,7 +7,7 @@ from app.services.game_service import GameService
 from app.services.notification_service import NotificationService
 from app.core.scheduler import Scheduler
 from app.core.service_container import container
-from app.utils.config import load_config
+from app.utils.config import load_config, save_config
 from app.utils.logger import logger
 from app.ui.desktop.main_window import StreamTailGUI
 from app.ui.web.api import start_web_server
@@ -48,6 +48,21 @@ class StreamTailApp:
 
         self.scheduler.start(interval=self.config.get("app", {}).get("check_interval", 15))
         logger.info("Фоновая инициализация завершена.")
+
+    def update_app_config(self, new_config: dict):
+        """Динамически обновляет настройки без перезапуска приложения."""
+        self.config = new_config
+        save_config(new_config)
+
+        # Переинициализируем параметры плагинов
+        platform_config = self.config.get("platforms", {})
+        for name, plugin in self.plugin_manager.all().items():
+            plugin_cfg = platform_config.get(name.lower(), {})
+            plugin.config = plugin_cfg
+            if plugin_cfg.get("enabled", True):
+                plugin.enable()
+            else:
+                plugin.enabled = False
 
     def shutdown(self):
         logger.info("Остановка StreamTail...")

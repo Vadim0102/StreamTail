@@ -23,6 +23,8 @@ class Scheduler:
 
     async def _loop(self, interval: int):
         while self.running:
+            # Считываем интервал динамически на случай изменений в UI
+            current_interval = self.plugin_manager.config.get("app", {}).get("check_interval", interval)
             for name, plugin in self.plugin_manager.all().items():
                 if plugin.enabled:
                     try:
@@ -31,4 +33,4 @@ class Scheduler:
                         self.event_bus.emit("stream.status_checked", status)
                     except Exception as e:
                         logger.error(f"Ошибка проверки статуса {name}: {e}")
-            await asyncio.sleep(interval)
+            await asyncio.sleep(current_interval)
