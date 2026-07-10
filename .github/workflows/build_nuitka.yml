@@ -51,16 +51,36 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install nuitka
+        pip install -U nuitka # Гарантирует установку последней стабильной версии Nuitka
 
     - name: Extract version from app/core/__init__.py
       id: get_version
       shell: bash
       run: |
-        # Считываем версию с явным указанием кодировки UTF-8 для обхода ограничений Windows
-        VERSION=$(python -c "with open('app/core/__init__.py', encoding='utf-8') as f: exec(f.read()); print(__version__)")
-        echo "APP_VERSION=$VERSION" >> $GITHUB_ENV
-        echo "Extracted Version: $VERSION"
+        # Используем heredoc для создания временного скрипта без проблем с экранированием в Bash
+        cat << 'EOF' > get_version.py
+        import re
+        with open("app/core/__init__.py", "r", encoding="utf-8") as f:
+            text = f.read()
+        
+        # Безопасное извлечение через регулярное выражение
+        ver_match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', text)
+        ver = ver_match.group(1) if ver_match else "2.1.0"
+        
+        # Приведение версии к четырехзначному цифровому формату X.Y.Z.W для Windows PE Metadata
+        clean_ver = re.sub(r'[^0-9.]', '', ver.split('-')[0])
+        parts = clean_ver.split('.')
+        while len(parts) < 4:
+            parts.append('0')
+        win_ver = '.'.join(parts[:4])
+        
+        # Экспорт переменных в окружение GitHub Actions
+        print(f"APP_VERSION={ver}")
+        print(f"WIN_VERSION={win_ver}")
+        EOF
+        
+        python get_version.py >> $GITHUB_ENV
+        rm get_version.py
 
     - name: Build with Nuitka
       shell: bash # Запуск строго в bash на всех ОС для корректной работы переноса строк через "\"
@@ -70,17 +90,19 @@ jobs:
         # --enable-plugin=tk-inter: интеграция библиотек Tcl/Tk для GUI на Tkinter
         # --include-package-data=sv_ttk: включение всех ресурсов темы оформления sv-ttk
         # --include-package: принудительное включение uvicorn и plyer для обхода проблем динамического импорта
-        # --accept-downloads: автоматическая загрузка Dependency Walker без прерывания сборки вопросами
+        # --assume-yes-for-downloads: автоматическая загрузка Dependency Walker без прерывания сборки вопросами
+        # --output-filename: задает имя исполняемого файла, избавляя от лишних переименований
         python -m nuitka --standalone \
                          --onefile \
                          --enable-plugin=tk-inter \
                          --include-package-data=sv_ttk \
                          --include-package=uvicorn \
                          --include-package=plyer \
-                         --file-version=${{ env.APP_VERSION }} \
-                         --product-version=${{ env.APP_VERSION }} \
+                         --file-version=${{ env.WIN_VERSION }} \
+                         --product-version=${{ env.WIN_VERSION }} \
+                         --output-filename=StreamTail \
                          --output-dir=build_dist \
-                         --accept-downloads \
+                         --assume-yes-for-downloads \
                          ${{ matrix.nuitka_flags }} \
                          main.py
 
@@ -88,26 +110,25 @@ jobs:
       if: matrix.os == 'windows-latest'
       shell: bash
       run: |
-        # Переименовываем скомпилированный main.exe в StreamTail-Windows.exe
-        mv build_dist/main.exe build_dist/StreamTail-Windows.exe
+        # Переименовываем скомпилированный StreamTail.exe в StreamTail-Windows.exe
+        mv build_dist/StreamTail.exe build_dist/StreamTail-Windows.exe
 
     - name: Post-process Linux build
       if: matrix.os == 'ubuntu-22.04'
       shell: bash
       run: |
         # Переименовываем бинарник с проверкой расширения (.bin или без него)
-        if [ -f build_dist/main.bin ]; then
-          mv build_dist/main.bin build_dist/StreamTail-Linux
+        if [ -f build_dist/StreamTail.bin ]; then
+          mv build_dist/StreamTail.bin build_dist/StreamTail-Linux
         else
-          mv build_dist/main build_dist/StreamTail-Linux
+          mv build_dist/StreamTail build_dist/StreamTail-Linux
         fi
 
     - name: Post-process macOS build (Create ZIP of .app bundle)
       if: matrix.os == 'macos-latest'
       shell: bash
       run: |
-        # Переименовываем бандл и архивируем в ZIP для сохранения структуры папок
-        mv build_dist/main.app build_dist/StreamTail.app
+        # Архивируем StreamTail.app (который уже назван верно благодаря --output-filename)
         cd build_dist
         zip -r ../StreamTail-macOS.zip StreamTail.app
 
