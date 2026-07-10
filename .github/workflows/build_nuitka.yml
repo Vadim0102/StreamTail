@@ -1,0 +1,105 @@
+name: Build Nuitka Executables
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-22.04, macos-latest]
+        include:
+          - os: windows-latest
+            artifact_name: StreamTail-Windows
+            output_name: StreamTail
+            # Для Windows отключаем консоль и прописываем метаданные в свойства .exe файла
+            nuitka_flags: "--windows-console-mode=disable --windows-company-name=Vadim0102 --windows-product-name=StreamTail"
+            upload_path: "build_dist/StreamTail-Windows.exe"
+            
+          - os: ubuntu-22.04
+            artifact_name: StreamTail-Linux
+            output_name: StreamTail
+            nuitka_flags: ""
+            upload_path: "build_dist/StreamTail-Linux"
+            
+          - os: macos-latest
+            artifact_name: StreamTail-macOS
+            output_name: StreamTail
+            # На macOS создаем полноценный бандл .app вместо бинарника
+            nuitka_flags: "--macos-disable-console --macos-create-app-bundle"
+            upload_path: "StreamTail-macOS.zip"
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install system dependencies (Linux only)
+      if: matrix.os == 'ubuntu-22.04'
+      run: |
+        sudo apt-get update
+        # patchelf необходим Nuitka для корректировки путей динамических библиотек в Linux
+        sudo apt-get install -y python3-tk patchelf
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install nuitka
+
+    - name: Extract version from app/core/__init__.py
+      id: get_version
+      shell: bash
+      run: |
+        VERSION=$(python -c "with open('app/core/__init__.py') as f: exec(f.read()); print(__version__)")
+        echo "APP_VERSION=$VERSION" >> $GITHUB_ENV
+        echo "Extracted Version: $VERSION"
+
+    - name: Build with Nuitka
+      run: |
+        python -m nuitka --standalone \
+                         --onefile \
+                         --enable-plugin=tk-inter \
+                         --include-package-data=sv_ttk \
+                         --file-version=${{ env.APP_VERSION }} \
+                         --product-version=${{ env.APP_VERSION }} \
+                         --output-dir=build_dist \
+                         --name="${{ matrix.output_name }}" \
+                         ${{ matrix.nuitka_flags }} \
+                         main.py
+
+    - name: Post-process Windows build
+      if: matrix.os == 'windows-latest'
+      shell: bash
+      run: |
+        mv build_dist/StreamTail.exe build_dist/StreamTail-Windows.exe
+
+    - name: Post-process Linux build
+      if: matrix.os == 'ubuntu-22.04'
+      shell: bash
+      run: |
+        mv build_dist/StreamTail build_dist/StreamTail-Linux
+
+    - name: Post-process macOS build (Create ZIP of .app bundle)
+      if: matrix.os == 'macos-latest'
+      shell: bash
+      run: |
+        cd build_dist
+        # Архивируем созданное приложение .app в zip для удобного скачивания пользователями
+        zip -r ../StreamTail-macOS.zip StreamTail.app
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: ${{ matrix.upload_path }}
