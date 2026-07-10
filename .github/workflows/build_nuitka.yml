@@ -16,18 +16,19 @@ jobs:
         include:
           - os: windows-latest
             artifact_name: StreamTail-Windows
-            # Настройки Windows: скрываем консоль, задаем метаданные .exe файла
-            nuitka_flags: "--windows-console-mode=disable --windows-company-name=Vadim0102 --windows-product-name=StreamTail"
+            # Настройки Windows: собираем в ОДИН файл, скрываем консоль, задаем метаданные .exe
+            nuitka_flags: "--onefile --windows-console-mode=disable --windows-company-name=Vadim0102 --windows-product-name=StreamTail"
             upload_path: "build_dist/StreamTail-Windows.exe"
             
           - os: ubuntu-22.04
             artifact_name: StreamTail-Linux
-            nuitka_flags: ""
+            # Настройки Linux: собираем в ОДИН файл
+            nuitka_flags: "--onefile"
             upload_path: "build_dist/StreamTail-Linux"
             
           - os: macos-latest
             artifact_name: StreamTail-macOS
-            # Настройки macOS: скрываем консоль, генерируем приложение в формате .app бандла
+            # Настройки macOS: БЕЗ --onefile. Собираем в standalone .app бандл и скрываем консоль
             nuitka_flags: "--macos-disable-console --macos-create-app-bundle"
             upload_path: "StreamTail-macOS.zip"
 
@@ -85,15 +86,13 @@ jobs:
     - name: Build with Nuitka
       shell: bash # Запуск строго в bash на всех ОС для корректной работы переноса строк через "\"
       run: |
-        # --standalone: создание переносимой папки со всеми библиотеками
-        # --onefile: упаковка всех зависимостей в единый исполняемый файл
+        # --standalone: создание переносимой папки со всеми библиотеками (обязательно для бандлов macOS и сборки onefile)
         # --enable-plugin=tk-inter: интеграция библиотек Tcl/Tk для GUI на Tkinter
         # --include-package-data=sv_ttk: включение всех ресурсов темы оформления sv-ttk
         # --include-package: принудительное включение uvicorn и plyer для обхода проблем динамического импорта
-        # --assume-yes-for-downloads: автоматическая загрузка Dependency Walker без прерывания сборки вопросами
-        # --output-filename: задает имя исполняемого файла, избавляя от лишних переименований
+        # --assume-yes-for-downloads: автоматическая загрузка Dependency Walker и ccache
+        # --output-filename: задает имя исполняемого файла / бандла внутри build_dist
         python -m nuitka --standalone \
-                         --onefile \
                          --enable-plugin=tk-inter \
                          --include-package-data=sv_ttk \
                          --include-package=uvicorn \
@@ -128,7 +127,7 @@ jobs:
       if: matrix.os == 'macos-latest'
       shell: bash
       run: |
-        # Архивируем StreamTail.app (который уже назван верно благодаря --output-filename)
+        # Поскольку --onefile убран для macOS, Nuitka создала корректную директорию StreamTail.app
         cd build_dist
         zip -r ../StreamTail-macOS.zip StreamTail.app
 
