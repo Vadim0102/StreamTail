@@ -2,8 +2,8 @@ name: Build Nuitka Executables
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:
+    branches: [ main, master ] # Запуск при пуше в основную ветку (main или master)
+  workflow_dispatch:           # Возможность ручного запуска из интерфейса GitHub
 
 jobs:
   build:
@@ -16,6 +16,7 @@ jobs:
         include:
           - os: windows-latest
             artifact_name: StreamTail-Windows
+            # Настройки Windows: скрываем консоль, задаем метаданные .exe файла
             nuitka_flags: "--windows-console-mode=disable --windows-company-name=Vadim0102 --windows-product-name=StreamTail"
             upload_path: "build_dist/StreamTail-Windows.exe"
             
@@ -26,6 +27,7 @@ jobs:
             
           - os: macos-latest
             artifact_name: StreamTail-macOS
+            # Настройки macOS: скрываем консоль, генерируем приложение в формате .app бандла
             nuitka_flags: "--macos-disable-console --macos-create-app-bundle"
             upload_path: "StreamTail-macOS.zip"
 
@@ -55,20 +57,30 @@ jobs:
       id: get_version
       shell: bash
       run: |
+        # Считываем версию с явным указанием кодировки UTF-8 для обхода ограничений Windows
         VERSION=$(python -c "with open('app/core/__init__.py', encoding='utf-8') as f: exec(f.read()); print(__version__)")
         echo "APP_VERSION=$VERSION" >> $GITHUB_ENV
         echo "Extracted Version: $VERSION"
 
     - name: Build with Nuitka
-      shell: bash # Исправлено: Принудительный запуск в bash предотвращает синтаксические ошибки PowerShell на Windows
+      shell: bash # Запуск строго в bash на всех ОС для корректной работы переноса строк через "\"
       run: |
+        # --standalone: создание переносимой папки со всеми библиотеками
+        # --onefile: упаковка всех зависимостей в единый исполняемый файл
+        # --enable-plugin=tk-inter: интеграция библиотек Tcl/Tk для GUI на Tkinter
+        # --include-package-data=sv_ttk: включение всех ресурсов темы оформления sv-ttk
+        # --include-package: принудительное включение uvicorn и plyer для обхода проблем динамического импорта
+        # --accept-downloads: автоматическая загрузка Dependency Walker без прерывания сборки вопросами
         python -m nuitka --standalone \
                          --onefile \
                          --enable-plugin=tk-inter \
                          --include-package-data=sv_ttk \
+                         --include-package=uvicorn \
+                         --include-package=plyer \
                          --file-version=${{ env.APP_VERSION }} \
                          --product-version=${{ env.APP_VERSION }} \
                          --output-dir=build_dist \
+                         --accept-downloads \
                          ${{ matrix.nuitka_flags }} \
                          main.py
 
@@ -76,12 +88,14 @@ jobs:
       if: matrix.os == 'windows-latest'
       shell: bash
       run: |
+        # Переименовываем скомпилированный main.exe в StreamTail-Windows.exe
         mv build_dist/main.exe build_dist/StreamTail-Windows.exe
 
     - name: Post-process Linux build
       if: matrix.os == 'ubuntu-22.04'
       shell: bash
       run: |
+        # Переименовываем бинарник с проверкой расширения (.bin или без него)
         if [ -f build_dist/main.bin ]; then
           mv build_dist/main.bin build_dist/StreamTail-Linux
         else
@@ -92,6 +106,7 @@ jobs:
       if: matrix.os == 'macos-latest'
       shell: bash
       run: |
+        # Переименовываем бандл и архивируем в ZIP для сохранения структуры папок
         mv build_dist/main.app build_dist/StreamTail.app
         cd build_dist
         zip -r ../StreamTail-macOS.zip StreamTail.app
