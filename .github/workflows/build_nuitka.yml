@@ -55,14 +55,13 @@ jobs:
       id: get_version
       shell: bash
       run: |
-        # Исправлено: Явное указание encoding='utf-8' предотвращает краш на Windows-раннерах
         VERSION=$(python -c "with open('app/core/__init__.py', encoding='utf-8') as f: exec(f.read()); print(__version__)")
         echo "APP_VERSION=$VERSION" >> $GITHUB_ENV
         echo "Extracted Version: $VERSION"
 
     - name: Build with Nuitka
+      shell: bash # Исправлено: Принудительный запуск в bash предотвращает синтаксические ошибки PowerShell на Windows
       run: |
-        # Исправлено: Удален недопустимый флаг --name
         python -m nuitka --standalone \
                          --onefile \
                          --enable-plugin=tk-inter \
@@ -77,14 +76,12 @@ jobs:
       if: matrix.os == 'windows-latest'
       shell: bash
       run: |
-        # Переименовываем стандартный main.exe в StreamTail-Windows.exe
         mv build_dist/main.exe build_dist/StreamTail-Windows.exe
 
     - name: Post-process Linux build
       if: matrix.os == 'ubuntu-22.04'
       shell: bash
       run: |
-        # Переименовываем бинарник с учетом возможных расширений (.bin или без него)
         if [ -f build_dist/main.bin ]; then
           mv build_dist/main.bin build_dist/StreamTail-Linux
         else
@@ -95,7 +92,6 @@ jobs:
       if: matrix.os == 'macos-latest'
       shell: bash
       run: |
-        # Переименовываем бандл main.app в StreamTail.app и упаковываем в архив
         mv build_dist/main.app build_dist/StreamTail.app
         cd build_dist
         zip -r ../StreamTail-macOS.zip StreamTail.app
