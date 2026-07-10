@@ -127,7 +127,8 @@ jobs:
       if: matrix.os == 'macos-latest'
       shell: bash
       run: |
-        # Поскольку --onefile убран для macOS, Nuitka создала корректную директорию StreamTail.app
+        # Переименовываем внешнюю папку-бандл main.app в StreamTail.app и архивируем в ZIP
+        mv build_dist/main.app build_dist/StreamTail.app
         cd build_dist
         zip -r ../StreamTail-macOS.zip StreamTail.app
 
