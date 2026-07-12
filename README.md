@@ -1,6 +1,6 @@
 # StreamTail 🚀
 
-![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)
+![Version](https://img.shields.io/badge/version-2.2.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.10%2B-green.svg)
 ![License](https://img.shields.io/badge/license-Apache%202.0-lightgrey.svg)
 

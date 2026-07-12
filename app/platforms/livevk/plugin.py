@@ -7,9 +7,9 @@ VK Video Live Integration Plugin (compatible with VK Play Live).
 
 1. ЧТЕНИЕ СТАТУСА (Публичный продакшн эндпоинт):
    • GET https://api.live.vkvideo.ru/v1/blog/{owner_id}/public_video_stream
-   • Response: 
+   • Response:
      {
-       "isOnline": true/false, "title": "Stream title", 
+       "isOnline": true/false, "title": "Stream title",
        "category": {"id": "uuid", "title": "Game name"},
        "count": {"viewers": 150}
      }
@@ -20,7 +20,7 @@ VK Video Live Integration Plugin (compatible with VK Play Live).
 
 3. ОБНОВЛЕНИЕ СТРИМА (Защищенный Студийный эндпоинт - Метод PUT!):
    • PUT https://api.live.vkvideo.ru/v1/channel/{owner_id}/manage/stream
-   • Headers: 
+   • Headers:
      - Authorization: Bearer <accessToken_из_localStorage>
      - X-From-Id: vkplay.live (Официальный Client ID сайта VK Live, подставляется плагином)
      - Content-Type: application/x-www-form-urlencoded
@@ -94,7 +94,13 @@ class LiveVKPlugin(BasePlugin):
     # ── Чтение статуса ────────────────────────────────────────────────────────
 
     async def get_status(self):
-        status = {"is_live": False, "viewers": 0, "title": "", "game": ""}
+        status = {
+            "is_live": False,
+            "viewers": 0,
+            "title": "",
+            "game": "",
+            "needs_publish": False
+        }
         if not self.owner_id:
             return status
 
@@ -118,14 +124,15 @@ class LiveVKPlugin(BasePlugin):
                         "is_live": is_live,
                         "viewers": viewers,
                         "title": str(title).strip(),
-                        "game": str(game).strip()
+                        "game": str(game).strip(),
+                        "needs_publish": True  # Позволяем опубликовать трансляцию в любой момент из интерфейса [2.1]
                     })
         except Exception as e:
             logger.error(f"Ошибка статуса VK: {e!r}")
 
         return status
 
-    # ── Вспомогательный метод обновления (Объединяет параметры во избежание затирания) ──
+    # ── Вспомогательный метод обновления ──
 
     async def _update_stream_info(self, title: str = None, category_id: str = None) -> str:
         current_title = ""
@@ -208,3 +215,30 @@ class LiveVKPlugin(BasePlugin):
         except Exception:
             pass
         return None
+
+    # ── Публикация трансляции (Сделать публичной) ───────────────────────────
+
+    async def publish_stream(self) -> str:
+        """
+        Публикует трансляцию в VK Video Live.
+        """
+        if not self.token:
+            return "VK Live: Нет токена авторизации"
+        if not self.owner_id:
+            return "VK Live: Не задан Owner ID"
+
+        try:
+            async with http_client.create_client(timeout=10.0) as client:
+                url = f"{self.api_base}/channel/{self.owner_id}/manage/stream"
+                # Отправляем параметры публикации трансляции на сервере VK Live
+                payload = {
+                    "publish": "1",
+                    "access_status": "public",
+                    "is_private": "0"
+                }
+                resp = await client.put(url, headers=self.headers, data=payload)
+                if resp.status_code in (200, 204):
+                    return "VK Live: Трансляция успешно опубликована!"
+                return f"VK Live Ошибка публикации ({resp.status_code}): {resp.text}"
+        except Exception as e:
+            return f"VK Live Исключение при публикации: {e!r}"

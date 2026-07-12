@@ -69,7 +69,7 @@ async def _exchange_code(client_id: str, client_secret: str, code: str) -> bool:
         refresh_token = data.get("refresh_token", "")
         expires_in = data.get("expires_in", 3600)
 
-        # Ищем активный broadcast
+        # Ищем активный broadcast (публичный)
         broadcast_id = await _fetch_broadcast_id(access_token)
 
         from app.auth.token_store import set_token # Локальный импорт
@@ -96,6 +96,7 @@ async def _fetch_broadcast_id(access_token: str) -> str:
     """
     Ищет активную или ближайшую трансляцию.
     Порядок: live → upcoming → все.
+    Приоритет отдается публичным трансляциям (privacyStatus == 'public') [1.2].
     """
     headers = {"Authorization": f"Bearer {access_token}"}
     for status in ("active", "upcoming", "all"):
@@ -104,18 +105,27 @@ async def _fetch_broadcast_id(access_token: str) -> str:
                 resp = await client.get(
                     BROADCASTS_URL,
                     params={
-                        "part": "id,snippet",
+                        "part": "id,snippet,status",
                         "broadcastStatus": status,
                         "broadcastType": "all",
-                        "maxResults": 1,
+                        "maxResults": 15,  # Запрашиваем до 15 трансляций, чтобы найти публичную
                     },
                     headers=headers,
                 )
                 data = resp.json()
                 items = data.get("items", [])
                 if items:
+                    # 1. Сначала приоритизируем публичные (public) трансляции
+                    for item in items:
+                        privacy = item.get("status", {}).get("privacyStatus", "").lower()
+                        if privacy == "public":
+                            bid = item["id"]
+                            logger.debug(f"YouTube: найден публичный broadcast_id={bid} (status={status})")
+                            return bid
+
+                    # 2. Если публичных нет, выбираем первую доступную
                     bid = items[0]["id"]
-                    logger.debug(f"YouTube: найден broadcast_id={bid} (status={status})")
+                    logger.debug(f"YouTube: публичный стрим не найден, выбран первый доступный broadcast_id={bid} (status={status})")
                     return bid
         except Exception as e:
             logger.error(f"YouTube: ошибка поиска broadcast: {e}")
@@ -139,7 +149,6 @@ async def refresh(client_id: str, client_secret: str, refresh_token: str) -> boo
         set_token("youtube", {
             **existing,
             "access_token": data["access_token"],
-            # Google редко даёт новый refresh_token — оставляем старый
             "refresh_token": data.get("refresh_token", refresh_token),
             "expires_at": int(time.time()) + data.get("expires_in", 3600),
         })
