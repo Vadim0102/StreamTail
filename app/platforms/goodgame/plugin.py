@@ -26,6 +26,7 @@ GoodGame Integration Plugin.
        плагин реализует Read-Modify-Write (предварительно читает текущую пару через GET).
 ========================================================================================
 """
+
 import time
 import httpx
 from app.auth.goodgame_auth import TOKEN_URL
@@ -85,8 +86,7 @@ class GoodGamePlugin(BasePlugin):
                 resp = await client.get("https://goodgame.ru/api/4/user", headers=self.headers)
                 if resp.status_code == 200:
                     data = resp.json()
-                    stream_id = data.get("stream_id") or data.get("stream", {}).get("id") or data.get("channel",
-                                                                                                      {}).get("id")
+                    stream_id = data.get("stream_id") or data.get("stream", {}).get("id") or data.get("channel", {}).get("id")
                     if stream_id:
                         logger.info(f"GoodGame: Успешно получен ID стрима {stream_id} напрямую из профиля /user")
                         return str(stream_id)
@@ -107,10 +107,9 @@ class GoodGamePlugin(BasePlugin):
 
         return ""
 
-    async def _update_stream_info(self, client: httpx.AsyncClient, stream_id: str, title: str = None,
-                                  game_id: int = None) -> str:
+    async def _update_stream_info(self, client: httpx.AsyncClient, stream_id: str, title: str = None, game_id: int = None) -> str:
         """
-        Обновляет название и категорию трансляции на GoodGame, используя 
+        Обновляет название и категорию трансляции на GoodGame, используя
         официальный приватный эндпоинт из HAR-лога во избежание 404 ошибок.
         """
         get_url = "https://goodgame.ru/api/4/streams/for-helpers/game-title"
@@ -231,27 +230,6 @@ class GoodGamePlugin(BasePlugin):
             return f"GoodGame Ошибка: {e!r}"
 
     async def refresh(self, client_id: str, client_secret: str, refresh_token: str) -> bool:
-        try:
-            async with http_client.create_client() as client:
-                resp = await client.post(TOKEN_URL, data={
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                    "grant_type": "refresh_token",
-                    "refresh_token": refresh_token,
-                })
-                resp.raise_for_status()
-                data = resp.json()
-
-            from app.auth.token_store import get_token, set_token
-            existing = get_token("goodgame") or {}
-            set_token("goodgame", {
-                **existing,
-                "access_token": data["access_token"],
-                "refresh_token": data.get("refresh_token", refresh_token),
-                "expires_at": int(time.time()) + data.get("expires_in", 3600),
-            })
-            logger.info("GoodGame: токен успешно обновлён (refresh).")
-            return True
-        except Exception as e:
-            logger.error(f"GoodGame: ошибка обновления токена: {e!r}")
-            return False
+        """Перенаправление во избежание сбоев устаревшего API."""
+        from app.auth import goodgame_auth
+        return await goodgame_auth.refresh(client_id, client_secret, refresh_token)

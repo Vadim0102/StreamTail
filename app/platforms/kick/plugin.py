@@ -60,7 +60,6 @@ class KickPlugin(BasePlugin):
 
     @property
     def token(self) -> str:
-        # Нормализуем токен через централизованный парсер кук
         raw_token = self.token_data.get("access_token") or self.config.get("token", "").strip()
         return token_parser.parse_any_cookie_format(raw_token)
 
@@ -343,7 +342,7 @@ class KickPlugin(BasePlugin):
                 resp = await client.get(
                     f"{self._BASE}/categories",
                     params={"name": game},
-                    headers=self._read_headers,
+                    headers=self.headers,
                 )
                 if resp.status_code == 200:
                     items = resp.json()

@@ -78,8 +78,14 @@ class LiveVKPlugin(BasePlugin):
         return "vkplay.live"
 
     @property
-    def owner_id(self):
-        return self.config.get("owner_id", "").strip()
+    def owner_id(self) -> str:
+        """Нормализует Owner ID: выделяет имя канала, даже если пользователь вставил полную ссылку."""
+        raw = self.config.get("owner_id", "").strip()
+        if not raw:
+            return ""
+        if "/" in raw:
+            return raw.rstrip("/").split("/")[-1]
+        return raw
 
     @property
     def headers(self):
@@ -230,7 +236,6 @@ class LiveVKPlugin(BasePlugin):
         try:
             async with http_client.create_client(timeout=10.0) as client:
                 url = f"{self.api_base}/channel/{self.owner_id}/manage/stream"
-                # Отправляем параметры публикации трансляции на сервере VK Live
                 payload = {
                     "publish": "1",
                     "access_status": "public",

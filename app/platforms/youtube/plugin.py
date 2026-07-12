@@ -210,7 +210,76 @@ class YouTubePlugin(BasePlugin):
             return "YouTube: Заголовок изменен" if resp.status_code == 200 else f"YouTube Ошибка: {resp.text}"
 
     async def set_game(self, game: str) -> str:
-        return "YouTube: Смена игры по названию требует сложного InnerTube API. Разработка продолжается."
+        """Реализовано: Изменение категории (игры) YouTube-трансляции через endpoint Videos по паттерну RMW."""
+        if not self.token:
+            return "YouTube: Нет токена"
+        await self._ensure_token_valid()
+
+        broadcast_id = self.broadcast_id
+        if not broadcast_id:
+            return "YouTube: Не определен ID трансляции"
+
+        # Нормализация популярных имен категорий в ID категорий YouTube
+        categories_map = {
+            "gaming": "20",
+            "games": "20",
+            "игры": "20",
+            "people": "22",
+            "blogs": "22",
+            "блоги": "22",
+            "entertainment": "24",
+            "развлечения": "24",
+            "music": "10",
+            "музыка": "10",
+            "education": "27",
+            "образование": "27",
+            "tech": "28",
+            "science": "28",
+            "наука": "28",
+            "технологии": "28"
+        }
+
+        normalized = game.lower().strip()
+        category_id = "20"  # Игры по умолчанию
+        for k, v in categories_map.items():
+            if k in normalized:
+                category_id = v
+                break
+
+        if normalized.isdigit():
+            category_id = normalized
+
+        try:
+            async with http_client.create_client() as client:
+                # Читаем данные видео
+                url = f"https://youtube.googleapis.com/youtube/v3/videos?part=snippet&id={broadcast_id}"
+                resp = await client.get(url, headers=self.headers)
+                if resp.status_code != 200:
+                    return f"YouTube Ошибка чтения метаданных ({resp.status_code}): {resp.text}"
+
+                data = resp.json()
+                if not data.get("items"):
+                    return "YouTube: Объект видеотрансляции не найден"
+
+                video_item = data["items"][0]
+                snippet = video_item["snippet"]
+                snippet["categoryId"] = category_id
+
+                # Обновляем категорию на YouTube
+                update_url = "https://youtube.googleapis.com/youtube/v3/videos?part=snippet"
+                update_resp = await client.put(
+                    update_url,
+                    headers=self.headers,
+                    json={
+                        "id": broadcast_id,
+                        "snippet": snippet
+                    }
+                )
+                if update_resp.status_code == 200:
+                    return f"YouTube: Категория успешно изменена на ID {category_id}"
+                return f"YouTube Ошибка обновления категории ({update_resp.status_code}): {update_resp.text[:150]}"
+        except Exception as e:
+            return f"YouTube Исключение при обновлении: {e!r}"
 
     # ── Получение списка liveStreams (потоков) для выбора ──
 
@@ -406,7 +475,7 @@ class YouTubePlugin(BasePlugin):
                     }
                 )
                 if resp.status_code == 200:
-                    return "YouTube: Трансляция успешно опубликована (сделана публичной)!"
+                    return "YouTube: Стрим успешно опубликован!"
                 return f"YouTube Ошибка публикации ({resp.status_code}): {resp.text[:100]}"
         except Exception as e:
             return f"YouTube Исключение при публикации: {e!r}"
@@ -477,7 +546,6 @@ class YouTubePlugin(BasePlugin):
             }
 
             async with http_client.create_client(timeout=30.0) as client:
-                # Метод Thumbnails:set поддерживает загрузку бинарных файлов на upload-эндпоинт
                 url = "https://www.googleapis.com/upload/youtube/v3/thumbnails/set"
                 resp = await client.post(
                     url,

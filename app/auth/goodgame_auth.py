@@ -57,3 +57,31 @@ async def authenticate(client_id: str, client_secret: str) -> bool:
     except Exception as e:
         logger.error(f"GoodGame: ошибка обмена кода: {e}")
         return False
+
+
+async def refresh(client_id: str, client_secret: str, refresh_token: str) -> bool:
+    """Автоматически обновляет истекший Access Token через Refresh Token."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(TOKEN_URL, data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            })
+            resp.raise_for_status()
+            data = resp.json()
+
+        from app.auth.token_store import get_token, set_token
+        existing = get_token("goodgame") or {}
+        set_token("goodgame", {
+            **existing,
+            "access_token": data["access_token"],
+            "refresh_token": data.get("refresh_token", refresh_token),
+            "expires_at": int(time.time()) + data.get("expires_in", 3600),
+        })
+        logger.info("GoodGame: токен успешно обновлён (refresh).")
+        return True
+    except Exception as e:
+        logger.error(f"GoodGame: ошибка автоматического обновления токена: {e!r}")
+        return False

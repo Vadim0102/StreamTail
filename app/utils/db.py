@@ -17,50 +17,48 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # Включаем WAL режим записи для ускорения дисковых операций и обхода блокировок при конкурентной записи
+    # Включаем WAL-режим для ускорения работы СУБД в многопоточной среде
     cursor.execute("PRAGMA journal_mode=WAL")
 
     cursor.execute("""
                    CREATE TABLE IF NOT EXISTS settings
                    (
-                       key
-                       TEXT
-                       PRIMARY
-                       KEY,
-                       value
-                       TEXT
+                       key TEXT PRIMARY KEY,
+                       value TEXT
                    )
                    """)
     cursor.execute("""
                    CREATE TABLE IF NOT EXISTS tokens
                    (
-                       platform
-                       TEXT
-                       PRIMARY
-                       KEY,
-                       token_data
-                       TEXT
+                       platform TEXT PRIMARY KEY,
+                       token_data TEXT
                    )
                    """)
     conn.commit()
     conn.close()
 
-    # Предварительное кэширование
+    # Предварительное кэширование настроек
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT key, value FROM settings")
     for r in cursor.fetchall():
-        decrypted = crypto.decrypt_text(r[1])
+        key, raw_val = r[0], r[1]
+        decrypted = crypto.decrypt_text(raw_val)
         if decrypted:
             try:
-                _settings_cache[r[0]] = json.loads(decrypted)
+                _settings_cache[key] = json.loads(decrypted)
             except Exception:
-                _settings_cache[r[0]] = decrypted
+                _settings_cache[key] = decrypted
         else:
+            # Предотвращение сохранения сырой Base64-строки при сбое дешифрования (например, изменение Hardware ID)
             try:
-                _settings_cache[r[0]] = json.loads(r[1])
+                _settings_cache[key] = json.loads(raw_val)
             except Exception:
-                _settings_cache[r[0]] = r[1]
+                if len(raw_val) > 16 and (raw_val.endswith("==") or not (raw_val.startswith("{") or raw_val.startswith("["))):
+                    # Если строка похожа на шифрованный Base64, но расшифровать её не вышло — игнорируем
+                    _settings_cache[key] = None
+                else:
+                    _settings_cache[key] = raw_val
 
     cursor.execute("SELECT platform, token_data FROM tokens")
     for r in cursor.fetchall():
@@ -68,11 +66,6 @@ def init_db():
         if decrypted:
             try:
                 _tokens_cache[r[0]] = json.loads(decrypted)
-            except Exception:
-                pass
-        else:
-            try:
-                _tokens_cache[r[0]] = json.loads(r[1])
             except Exception:
                 pass
     conn.close()
