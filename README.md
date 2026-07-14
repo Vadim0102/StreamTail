@@ -15,13 +15,12 @@
 
 ---
 
-> <p><b>Дополнительные экраны приложения</b></p>
 >
 > ### Настройки
-> ![Поиск](assets/settings_tab.png)
+> ![Настройки](assets/settings_tab.png)
 > 
 > ### Авторизация
-> ![Настройки](assets/auth_tab.png)
+> ![Авторизация](assets/auth_tab.png)
 > 
 </details>
 
