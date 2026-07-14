@@ -17,7 +17,7 @@ jobs:
           - os: windows-latest
             artifact_name: StreamTail-Windows
             # Настройки Windows: собираем в ОДИН файл, скрываем консоль, задаем метаданные .exe
-            nuitka_flags: "--onefile --windows-console-mode=disable --windows-company-name=Vadim0102 --windows-product-name=StreamTail"
+            nuitka_flags: "--onefile --windows-console-mode=force --windows-company-name=Vadim0102 --windows-product-name=StreamTail"
             upload_path: "build_dist/StreamTail-Windows.exe"
             
           - os: ubuntu-22.04
