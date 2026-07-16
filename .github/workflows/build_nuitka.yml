@@ -15,9 +15,7 @@ jobs:
         os: [windows-latest, ubuntu-22.04, macos-latest]
         include:
           - os: windows-latest
-            artifact_name: StreamTail-Windows
-            nuitka_flags: "--onefile --windows-console-mode=disable --windows-company-name=Vadim0102 --windows-product-name=StreamTail"
-            upload_path: "build_installer/StreamTail-Installer-Windows.exe"
+            artifact_name: StreamTail-Windows-Releases
 
           - os: ubuntu-22.04
             artifact_name: StreamTail-Linux
@@ -76,10 +74,81 @@ jobs:
         python get_version.py >> $GITHUB_ENV
         rm get_version.py
 
-    - name: Build with Nuitka
+    # --- Windows: Сборка Portable-версии (Standalone) ---
+    - name: Build Portable Standalone (Windows only)
+      if: matrix.os == 'windows-latest'
       shell: bash
       run: |
-        # Добавлен параметр --include-package=app для компиляции динамических пакетов плагинов
+        python -m nuitka --standalone \
+                         --enable-plugin=tk-inter \
+                         --include-package-data=sv_ttk \
+                         --include-package=uvicorn \
+                         --include-package=plyer \
+                         --include-package=app \
+                         --file-version=${{ env.WIN_VERSION }} \
+                         --product-version=${{ env.WIN_VERSION }} \
+                         --windows-company-name=Vadim0102 \
+                         --windows-product-name=StreamTail \
+                         --windows-console-mode=attach \
+                         --output-filename=StreamTail \
+                         --output-dir=build_standalone \
+                         --assume-yes-for-downloads \
+                         main.py
+
+        mkdir -p build_dist/StreamTail-Portable
+        cp -r build_standalone/main.dist/* build_dist/StreamTail-Portable/
+        
+        # Архивация Portable-версии
+        powershell -Command "Compress-Archive -Path build_dist/StreamTail-Portable -DestinationPath build_dist/StreamTail-Portable.zip -Force"
+
+    # --- Windows: Сборка Одного файла (Onefile) ---
+    - name: Build Onefile Executable (Windows only)
+      if: matrix.os == 'windows-latest'
+      shell: bash
+      run: |
+        python -m nuitka --onefile \
+                         --enable-plugin=tk-inter \
+                         --include-package-data=sv_ttk \
+                         --include-package=uvicorn \
+                         --include-package=plyer \
+                         --include-package=app \
+                         --file-version=${{ env.WIN_VERSION }} \
+                         --product-version=${{ env.WIN_VERSION }} \
+                         --windows-company-name=Vadim0102 \
+                         --windows-product-name=StreamTail \
+                         --windows-console-mode=attach \
+                         --output-filename=StreamTail-Onefile \
+                         --output-dir=build_onefile \
+                         --assume-yes-for-downloads \
+                         main.py
+
+        cp build_onefile/StreamTail-Onefile.exe build_dist/StreamTail-Onefile.exe
+
+    # --- Windows: Сборка обоих инсталляторов ---
+    - name: Compile Windows Onefile Installer
+      if: matrix.os == 'windows-latest'
+      uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
+      with:
+        path: installer_onefile.iss
+
+    - name: Compile Windows Full Installer
+      if: matrix.os == 'windows-latest'
+      uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
+      with:
+        path: installer_full.iss
+
+    - name: Organize Windows Installer Outputs
+      if: matrix.os == 'windows-latest'
+      shell: bash
+      run: |
+        cp build_installer/StreamTail-Onefile-Installer.exe build_dist/StreamTail-Onefile-Installer.exe
+        cp build_installer/StreamTail-Full-Installer.exe build_dist/StreamTail-Full-Installer.exe
+
+    # --- Linux & macOS: Стандартная сборка ---
+    - name: Build with Nuitka (Linux and macOS)
+      if: matrix.os != 'windows-latest'
+      shell: bash
+      run: |
         python -m nuitka --standalone \
                          --enable-plugin=tk-inter \
                          --include-package-data=sv_ttk \
@@ -93,18 +162,6 @@ jobs:
                          --assume-yes-for-downloads \
                          ${{ matrix.nuitka_flags }} \
                          main.py
-
-    - name: Post-process Windows build
-      if: matrix.os == 'windows-latest'
-      shell: bash
-      run: |
-        mv build_dist/StreamTail.exe build_dist/StreamTail-Windows.exe
-
-    - name: Compile Windows Installer (Inno Setup)
-      if: matrix.os == 'windows-latest'
-      uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
-      with:
-        path: installer.iss
 
     - name: Post-process Linux build
       if: matrix.os == 'ubuntu-22.04'
@@ -124,7 +181,27 @@ jobs:
         cd build_dist
         zip -r ../StreamTail-macOS.zip StreamTail.app
 
-    - name: Upload artifact
+    # --- Загрузка готовых релизов ---
+    - name: Upload Windows Artifacts
+      if: matrix.os == 'windows-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: |
+          build_dist/StreamTail-Onefile.exe
+          build_dist/StreamTail-Portable.zip
+          build_dist/StreamTail-Onefile-Installer.exe
+          build_dist/StreamTail-Full-Installer.exe
+
+    - name: Upload Linux Artifact
+      if: matrix.os == 'ubuntu-22.04'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: ${{ matrix.upload_path }}
+
+    - name: Upload macOS Artifact
+      if: matrix.os == 'macos-latest'
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.artifact_name }}

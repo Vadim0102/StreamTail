@@ -1,23 +1,23 @@
 #define MyAppName "StreamTail"
-#define MyAppVersion "2.3.0"    ; VERSION
+#define MyAppVersion "2.2.1"
 #define MyAppPublisher "Vadim0102"
 #define MyAppURL "https://github.com/Vadim0102/StreamTail"
-#define MyAppExeName "StreamTail-Windows.exe"
+#define MyAppExeName "StreamTail-Onefile.exe"
 
 [Setup]
-AppId={{148E7B27-05C1-4727-B5A1-2D83247CD4C1}
+AppId={{D37E6088-3B5D-4D3E-AC47-8B3FA8F39BA4}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-DefaultDirName={localappdata}\{#MyAppName}
+DefaultDirName={localappdata}\Programs\{#MyAppName}
 DisableDirPage=yes
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=build_installer
-OutputBaseFilename=StreamTail-Installer-Windows
+OutputBaseFilename=StreamTail-Onefile-Installer
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
@@ -32,7 +32,7 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
-Source: "build_dist\StreamTail-Windows.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "build_dist\StreamTail-Onefile.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
