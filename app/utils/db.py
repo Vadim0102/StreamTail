@@ -1,9 +1,13 @@
 import sqlite3
 import json
+import os
+import sys
 from pathlib import Path
 from app.utils import crypto
+from app.utils.paths import get_app_data_dir
 
-DB_PATH = Path("config/streamtail.db")
+# База данных хранится в AppData
+DB_PATH = get_app_data_dir() / "streamtail.db"
 _settings_cache = {}
 _tokens_cache = {}
 _db_initialized = False
@@ -50,12 +54,10 @@ def init_db():
             except Exception:
                 _settings_cache[key] = decrypted
         else:
-            # Предотвращение сохранения сырой Base64-строки при сбое дешифрования (например, изменение Hardware ID)
             try:
                 _settings_cache[key] = json.loads(raw_val)
             except Exception:
                 if len(raw_val) > 16 and (raw_val.endswith("==") or not (raw_val.startswith("{") or raw_val.startswith("["))):
-                    # Если строка похожа на шифрованный Base64, но расшифровать её не вышло — игнорируем
                     _settings_cache[key] = None
                 else:
                     _settings_cache[key] = raw_val

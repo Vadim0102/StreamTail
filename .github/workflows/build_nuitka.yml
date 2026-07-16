@@ -2,8 +2,8 @@ name: Build Nuitka Executables
 
 on:
   push:
-    branches: [ main, master ] # Запуск при пуше в основную ветку (main или master)
-  workflow_dispatch:           # Возможность ручного запуска из интерфейса GitHub
+    branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -16,19 +16,16 @@ jobs:
         include:
           - os: windows-latest
             artifact_name: StreamTail-Windows
-            # Настройки Windows: собираем в ОДИН файл, скрываем консоль, задаем метаданные .exe
             nuitka_flags: "--onefile --windows-console-mode=disable --windows-company-name=Vadim0102 --windows-product-name=StreamTail"
-            upload_path: "build_dist/StreamTail-Windows.exe"
-            
+            upload_path: "build_installer/StreamTail-Installer-Windows.exe"
+
           - os: ubuntu-22.04
             artifact_name: StreamTail-Linux
-            # Настройки Linux: собираем в ОДИН файл
             nuitka_flags: "--onefile"
             upload_path: "build_dist/StreamTail-Linux"
-            
+
           - os: macos-latest
             artifact_name: StreamTail-macOS
-            # Настройки macOS: БЕЗ --onefile. Собираем в standalone .app бандл и скрываем консоль
             nuitka_flags: "--macos-disable-console --macos-create-app-bundle"
             upload_path: "StreamTail-macOS.zip"
 
@@ -52,30 +49,26 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install -U nuitka # Гарантирует установку последней стабильной версии Nuitka
+        pip install -U nuitka
 
     - name: Extract version from app/core/__init__.py
       id: get_version
       shell: bash
       run: |
-        # Используем heredoc для создания временного скрипта без проблем с экранированием в Bash
         cat << 'EOF' > get_version.py
         import re
         with open("app/core/__init__.py", "r", encoding="utf-8") as f:
             text = f.read()
         
-        # Безопасное извлечение через регулярное выражение
         ver_match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', text)
         ver = ver_match.group(1) if ver_match else "2.1.0"
         
-        # Приведение версии к четырехзначному цифровому формату X.Y.Z.W для Windows PE Metadata
         clean_ver = re.sub(r'[^0-9.]', '', ver.split('-')[0])
         parts = clean_ver.split('.')
         while len(parts) < 4:
             parts.append('0')
         win_ver = '.'.join(parts[:4])
         
-        # Экспорт переменных в окружение GitHub Actions
         print(f"APP_VERSION={ver}")
         print(f"WIN_VERSION={win_ver}")
         EOF
@@ -84,19 +77,15 @@ jobs:
         rm get_version.py
 
     - name: Build with Nuitka
-      shell: bash # Запуск строго в bash на всех ОС для корректной работы переноса строк через "\"
+      shell: bash
       run: |
-        # --standalone: создание переносимой папки со всеми библиотеками (обязательно для бандлов macOS и сборки onefile)
-        # --enable-plugin=tk-inter: интеграция библиотек Tcl/Tk для GUI на Tkinter
-        # --include-package-data=sv_ttk: включение всех ресурсов темы оформления sv-ttk
-        # --include-package: принудительное включение uvicorn и plyer для обхода проблем динамического импорта
-        # --assume-yes-for-downloads: автоматическая загрузка Dependency Walker и ccache
-        # --output-filename: задает имя исполняемого файла / бандла внутри build_dist
+        # Добавлен параметр --include-package=app для компиляции динамических пакетов плагинов
         python -m nuitka --standalone \
                          --enable-plugin=tk-inter \
                          --include-package-data=sv_ttk \
                          --include-package=uvicorn \
                          --include-package=plyer \
+                         --include-package=app \
                          --file-version=${{ env.WIN_VERSION }} \
                          --product-version=${{ env.WIN_VERSION }} \
                          --output-filename=StreamTail \
@@ -109,14 +98,18 @@ jobs:
       if: matrix.os == 'windows-latest'
       shell: bash
       run: |
-        # Переименовываем скомпилированный StreamTail.exe в StreamTail-Windows.exe
         mv build_dist/StreamTail.exe build_dist/StreamTail-Windows.exe
+
+    - name: Compile Windows Installer (Inno Setup)
+      if: matrix.os == 'windows-latest'
+      uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
+      with:
+        path: installer.iss
 
     - name: Post-process Linux build
       if: matrix.os == 'ubuntu-22.04'
       shell: bash
       run: |
-        # Переименовываем бинарник с проверкой расширения (.bin или без него)
         if [ -f build_dist/StreamTail.bin ]; then
           mv build_dist/StreamTail.bin build_dist/StreamTail-Linux
         else
@@ -127,7 +120,6 @@ jobs:
       if: matrix.os == 'macos-latest'
       shell: bash
       run: |
-        # Переименовываем внешнюю папку-бандл main.app в StreamTail.app и архивируем в ZIP
         mv build_dist/main.app build_dist/StreamTail.app
         cd build_dist
         zip -r ../StreamTail-macOS.zip StreamTail.app
