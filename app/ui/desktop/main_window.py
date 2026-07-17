@@ -1,3 +1,4 @@
+## `app/ui/desktop/main_window.py`
 import tkinter as tk
 from tkinter import ttk, messagebox
 import asyncio
@@ -19,26 +20,98 @@ except ImportError:
     TRAY_SUPPORTED = False
     logger.warning("pystray не установлен. Функции системного трея отключены.")
 
+# Мягкие, пастельные брендовые цвета для темной и светлой темы (невырвиглазные)
+BRAND_COLORS = {
+    "dark": {
+        "twitch": {"bg": "#1f182d", "accent": "#a28cf2"},
+        "youtube": {"bg": "#2b1819", "accent": "#f28c8c"},
+        "livevk": {"bg": "#181f2d", "accent": "#8caef2"},
+        "kick": {"bg": "#182d19", "accent": "#8cf290"},
+        "goodgame": {"bg": "#2b2118", "accent": "#f2b58c"},
+        "rutube": {"bg": "#18272d", "accent": "#8ce2f2"},
+    },
+    "light": {
+        "twitch": {"bg": "#f5effa", "accent": "#6441a5"},
+        "youtube": {"bg": "#fbebeb", "accent": "#ff0000"},
+        "livevk": {"bg": "#ebf1fb", "accent": "#0077ff"},
+        "kick": {"bg": "#ebfbeb", "accent": "#53fc18"},
+        "goodgame": {"bg": "#faf2eb", "accent": "#ff7300"},
+        "rutube": {"bg": "#ebf6fa", "accent": "#00b2ff"},
+    }
+}
 
-class PlatformCard(ttk.LabelFrame):
+
+class PlatformCard(tk.LabelFrame):
     def __init__(self, parent, platform: str, app_core, *args, **kwargs):
-        super().__init__(parent, text=f" {platform.upper()} ", padding=15, *args, **kwargs)
         self.platform = platform
         self.app_core = app_core
 
+        # Определение текущей цветовой палитры в зависимости от темы
+        from app.utils import theme_manager
+        theme_name = theme_manager.get_current_theme_name()
+        theme_type = "light" if "Светлая" in theme_name else "dark"
+        colors = theme_manager.get_theme_colors()
+
+        self.brand = BRAND_COLORS[theme_type].get(platform.lower(), BRAND_COLORS[theme_type]["twitch"])
+
+        # Нативный контейнер позволяет беспрепятственно управлять фоном карточки
+        super().__init__(
+            parent,
+            text=f"  {platform.upper()}  ",
+            font=("Segoe UI", 10, "bold"),
+            bg=self.brand["bg"],
+            fg=self.brand["accent"],
+            relief=tk.SOLID,
+            bd=0,
+            padx=12,
+            pady=12,
+            *args, **kwargs
+        )
+        self.configure(
+            highlightbackground=self.brand["accent"],
+            highlightcolor=self.brand["accent"],
+            highlightthickness=1
+        )
+
         # Статус теперь занимает обе колонки сверху
-        self.lbl_status = ttk.Label(self, text="Ожидание...", font=("Segoe UI", 11, "bold"))
+        self.lbl_status = tk.Label(
+            self,
+            text="Ожидание...",
+            font=("Segoe UI", 11, "bold"),
+            bg=self.brand["bg"],
+            fg=colors["fg"]
+        )
         self.lbl_status.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 5))
 
-        self.lbl_viewers = ttk.Label(self, text="👁 Зрители: —", font=("Segoe UI", 10))
+        self.lbl_viewers = tk.Label(
+            self,
+            text="👁 Зрители: —",
+            font=("Segoe UI", 10),
+            bg=self.brand["bg"],
+            fg=colors["fg"]
+        )
         self.lbl_viewers.grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 15))
 
-        ttk.Label(self, text="Название:", font=("Segoe UI", 9)).grid(row=2, column=0, sticky="w")
+        tk.Label(
+            self,
+            text="Название:",
+            font=("Segoe UI", 9),
+            bg=self.brand["bg"],
+            fg=colors["fg"]
+        ).grid(row=2, column=0, sticky="w")
+
         self.title_var = tk.StringVar()
         self.entry_title = ttk.Entry(self, textvariable=self.title_var, width=28)
         self.entry_title.grid(row=2, column=1, sticky="ew", padx=5, pady=2)
 
-        ttk.Label(self, text="Категория:", font=("Segoe UI", 9)).grid(row=3, column=0, sticky="w")
+        tk.Label(
+            self,
+            text="Категория:",
+            font=("Segoe UI", 9),
+            bg=self.brand["bg"],
+            fg=colors["fg"]
+        ).grid(row=3, column=0, sticky="w")
+
         self.game_var = tk.StringVar()
         self.combo_game = ttk.Combobox(
             self,
@@ -49,7 +122,7 @@ class PlatformCard(ttk.LabelFrame):
         self.combo_game.grid(row=3, column=1, sticky="ew", padx=5, pady=2)
 
         # Контейнер для кнопок управления на пятой строке
-        self.apply_frame = ttk.Frame(self)
+        self.apply_frame = tk.Frame(self, bg=self.brand["bg"])
         self.apply_frame.grid(row=4, column=0, columnspan=2, pady=(15, 0), sticky="ew")
 
         # Создаем дополнительные кнопки управления заранее, но не размещаем в сетке [2.1]
@@ -517,6 +590,168 @@ class PlatformCard(ttk.LabelFrame):
         btn_submit.pack(pady=20, fill="x", padx=15)
 
 
+class OBSDockWindow(tk.Toplevel):
+    """Минималистичное открепляемое окно мониторинга статусов, идеально подходящее как OBS-док."""
+
+    def __init__(self, parent, app_core, gui):
+        super().__init__(parent)
+        self.app_core = app_core
+        self.gui = gui
+        self.title("Live Monitor")
+        self.geometry("260x340")
+        self.attributes("-topmost", True)
+        self.resizable(True, True)
+
+        from app.utils import theme_manager
+        self.colors = theme_manager.get_theme_colors()
+        self.configure(bg=self.colors["bg"])
+
+        # Заголовок дока
+        header = tk.Label(
+            self,
+            text="📊 СТРИМ-МОНИТОР",
+            font=("Segoe UI", 9, "bold"),
+            bg=self.colors["bg"],
+            fg=self.colors["text_sec"],
+            pady=8
+        )
+        header.pack(fill="x")
+
+        self.rows_frame = tk.Frame(self, bg=self.colors["bg"])
+        self.rows_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+        self.platform_widgets = {}
+        self._build_rows()
+
+        # Подписка на обновление данных в реальном времени
+        self.app_core.event_bus.subscribe("stream.status_checked", self.on_status_update)
+        self.app_core.event_bus.subscribe("plugins.loaded", self.on_plugins_loaded)
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def _build_rows(self):
+        # Удаляем старые виджеты перед перерисовкой (например, при смене темы или списка плагинов)
+        for w in self.rows_frame.winfo_children():
+            w.destroy()
+        self.platform_widgets.clear()
+
+        from app.utils import theme_manager
+        theme_name = theme_manager.get_current_theme_name()
+        theme_type = "light" if "Светлая" in theme_name else "dark"
+
+        for name, plugin in self.app_core.plugin_manager.all().items():
+            if plugin.enabled:
+                brand = BRAND_COLORS[theme_type].get(name.lower(), BRAND_COLORS[theme_type]["twitch"])
+
+                row = tk.Frame(self.rows_frame, bg=self.colors["field_bg"], pady=6, padx=8)
+                row.pack(fill="x", pady=2)
+
+                # Вертикальный цветной бренд-индикатор слева от строки
+                indicator = tk.Frame(row, bg=brand["accent"], width=4)
+                indicator.pack(side="left", fill="y", padx=(0, 8))
+
+                # Метка названия платформы
+                lbl_name = tk.Label(
+                    row,
+                    text=name.upper(),
+                    font=("Segoe UI", 8, "bold"),
+                    bg=self.colors["field_bg"],
+                    fg=self.colors["fg"]
+                )
+                lbl_name.pack(side="left")
+
+                status_container = tk.Frame(row, bg=self.colors["field_bg"])
+                status_container.pack(side="right")
+
+                # Метка лайков
+                lbl_likes = tk.Label(
+                    status_container,
+                    text="",
+                    font=("Segoe UI", 8),
+                    bg=self.colors["field_bg"],
+                    fg=self.colors["text_green"]
+                )
+                lbl_likes.pack(side="left", padx=2)
+
+                # Метка зрителей
+                lbl_viewers = tk.Label(
+                    status_container,
+                    text="👁 —",
+                    font=("Segoe UI", 8),
+                    bg=self.colors["field_bg"],
+                    fg=self.colors["fg"]
+                )
+                lbl_viewers.pack(side="left", padx=5)
+
+                # Точечный индикатор статуса
+                lbl_status = tk.Label(
+                    status_container,
+                    text="🔴",
+                    font=("Segoe UI", 8),
+                    bg=self.colors["field_bg"]
+                )
+                lbl_status.pack(side="left", padx=(5, 0))
+
+                self.platform_widgets[name] = {
+                    "row": row,
+                    "lbl_viewers": lbl_viewers,
+                    "lbl_likes": lbl_likes,
+                    "lbl_status": lbl_status
+                }
+
+                # Заполнение стартовыми данными из уже отрисованных карточек (без повторных запросов)
+                if name in self.gui.cards:
+                    card = self.gui.cards[name]
+                    self._update_row_ui(name, card.lbl_status.cget("text"), card.lbl_viewers.cget("text"))
+
+    def _update_row_ui(self, platform, status_text, viewers_text):
+        widgets = self.platform_widgets.get(platform)
+        if not widgets:
+            return
+
+        # Парсинг индикатора жизни
+        if "В ЭФИРЕ" in status_text or "🟢" in status_text:
+            widgets["lbl_status"].config(text="🟢", fg=self.colors["text_green"])
+        elif "ПОДГОТОВКЕ" in status_text or "🟡" in status_text:
+            widgets["lbl_status"].config(text="🟡", fg=self.colors["text_sec"])
+        else:
+            widgets["lbl_status"].config(text="🔴", fg=self.colors["text_red"])
+
+        # Вытаскиваем зрителей и лайки
+        if "|" in viewers_text:
+            parts = viewers_text.split("|")
+            v_val = parts[0].replace("👁 Зрители:", "").strip()
+            widgets["lbl_viewers"].config(text=f"👁 {v_val}")
+            likes_val = " ".join([p.strip() for p in parts[1:]])
+            widgets["lbl_likes"].config(text=likes_val)
+        else:
+            v_val = viewers_text.replace("👁 Зрители:", "").strip()
+            widgets["lbl_viewers"].config(text=f"👁 {v_val}")
+            widgets["lbl_likes"].config(text="")
+
+    def on_status_update(self, data):
+        platform = data.get("platform")
+        if platform in self.platform_widgets:
+            is_live = data.get("is_live", False)
+            status_text = data.get("custom_status") or ("🟢 В ЭФИРЕ" if is_live else "🔴 ОФФЛАЙН")
+            viewers_text = f"👁 Зрители: {data.get('viewers', 0)}"
+            if "likes" in data or "dislikes" in data:
+                viewers_text += f" | 👍 {data.get('likes', 0)} | 👎 {data.get('dislikes', 0)}"
+
+            self.after(0, self._update_row_ui, platform, status_text, viewers_text)
+
+    def on_plugins_loaded(self, data):
+        from app.utils import theme_manager
+        self.colors = theme_manager.get_theme_colors()
+        self.configure(bg=self.colors["bg"])
+        self.after(0, self._build_rows)
+
+    def on_close(self):
+        # Отписываемся от событий, чтобы избежать утечек памяти
+        self.app_core.event_bus.unsubscribe("stream.status_checked", self.on_status_update)
+        self.app_core.event_bus.unsubscribe("plugins.loaded", self.on_plugins_loaded)
+        self.destroy()
+
+
 class EventLogPanel(ttk.Frame):
     MAX_LINES = 200
 
@@ -597,6 +832,7 @@ class StreamTailGUI:
         self._subscribe_events()
 
         self.tray_icon = None
+        self.obs_dock = None
 
     def _set_theme(self):
         # Применяем сохраненную тему из Theme Manager
@@ -665,10 +901,21 @@ class StreamTailGUI:
         self.log_panel = EventLogPanel(self.tab_log)
         self.log_panel.pack(fill=tk.BOTH, expand=True)
 
+        # Нижний статус-бар
         status_frame = ttk.Frame(self.root)
         status_frame.pack(fill=tk.X, side=tk.BOTTOM, padx=10, pady=4)
+
         self.status_label = ttk.Label(status_frame, text=" Готов к работе")
         self.status_label.pack(side=tk.LEFT)
+
+        # Кнопка открытия минималистичного OBS Дока в статус-баре справа
+        self.btn_obs_dock = ttk.Button(
+            status_frame,
+            text="📊 OBS Док",
+            command=self.open_obs_dock,
+            width=12
+        )
+        self.btn_obs_dock.pack(side=tk.RIGHT)
 
         # Применяем кастомные цвета темы к текстовым полям логов и инструкций
         self.apply_theme_to_custom_widgets()
@@ -700,6 +947,14 @@ class StreamTailGUI:
                     background=colors["field_bg"],
                     foreground=colors["fg"]
                 )
+
+    def open_obs_dock(self):
+        """Запускает или выводит на передний план компактное окно мониторинга."""
+        if self.obs_dock is not None and self.obs_dock.winfo_exists():
+            self.obs_dock.lift()
+            self.obs_dock.focus_force()
+        else:
+            self.obs_dock = OBSDockWindow(self.root, self.app_core, self)
 
     def open_search_dialog(self):
         dialog = tk.Toplevel(self.root)
