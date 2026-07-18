@@ -1,6 +1,6 @@
-# StreamTail 🚀
+# StreamTail <img src="assets/icon.png" width="28">
 
-![Version](https://img.shields.io/badge/version-2.4.0-blue.svg) <!-- VERSION -->
+![Version](https://img.shields.io/badge/version-2.5.0-blue.svg) <!-- VERSION -->
 ![Python](https://img.shields.io/badge/python-3.10%2B-green.svg)
 ![License](https://img.shields.io/badge/license-Apache%202.0-lightgrey.svg)
 

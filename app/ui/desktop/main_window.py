@@ -1,10 +1,12 @@
 ## `app/ui/desktop/main_window.py`
+import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
 import asyncio
 import threading
 import sv_ttk
 from datetime import datetime
+from PIL import Image, ImageDraw, ImageTk
 from app.utils.logger import logger
 from app.ui.desktop.auth_tab import AuthTab
 from app.ui.desktop.settings_tab import SettingsTab
@@ -13,8 +15,6 @@ from app.core import __version__
 
 try:
     import pystray
-    from PIL import Image, ImageDraw
-
     TRAY_SUPPORTED = True
 except ImportError:
     TRAY_SUPPORTED = False
@@ -606,6 +606,9 @@ class OBSDockWindow(tk.Toplevel):
         self.colors = theme_manager.get_theme_colors()
         self.configure(bg=self.colors["bg"])
 
+        # Установка иконки для вспомогательного окна
+        self._set_window_icon()
+
         # Заголовок дока
         header = tk.Label(
             self,
@@ -627,6 +630,23 @@ class OBSDockWindow(tk.Toplevel):
         self.app_core.event_bus.subscribe("stream.status_checked", self.on_status_update)
         self.app_core.event_bus.subscribe("plugins.loaded", self.on_plugins_loaded)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def _set_window_icon(self):
+        """Устанавливает иконку для окна OBS Дока."""
+        from app.utils.paths import get_asset_path
+        icon_path = get_asset_path("icon.ico")
+        if icon_path.exists():
+            try:
+                if sys.platform == "win32":
+                    self.iconbitmap(str(icon_path))
+                else:
+                    from PIL import ImageTk
+                    img = Image.open(icon_path)
+                    photo = ImageTk.PhotoImage(img)
+                    self.iconphoto(True, photo)
+                    self._icon_ref = photo
+            except Exception as e:
+                logger.debug(f"Ошибка установки иконки OBS Дока: {e}")
 
     def _build_rows(self):
         # Удаляем старые виджеты перед перерисовкой (например, при смене темы или списка плагинов)
@@ -828,6 +848,7 @@ class StreamTailGUI:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close_window)
 
         self._set_theme()
+        self._set_window_icon()  # Установка иконки главного окна
         self._build_ui()
         self._subscribe_events()
 
@@ -838,6 +859,40 @@ class StreamTailGUI:
         # Применяем сохраненную тему из Theme Manager
         from app.utils import theme_manager
         theme_manager.apply_theme(self.root)
+
+    def _set_window_icon(self):
+        """Устанавливает иконку главного окна из assets/icon.ico."""
+        from app.utils.paths import get_asset_path
+        icon_path = get_asset_path("icon.ico")
+        if icon_path.exists():
+            try:
+                if sys.platform == "win32":
+                    self.root.iconbitmap(str(icon_path))
+                else:
+                    from PIL import ImageTk
+                    img = Image.open(icon_path)
+                    photo = ImageTk.PhotoImage(img)
+                    # default=True применит иконку ко всем дочерним окнам по умолчанию
+                    self.root.iconphoto(True, photo)
+                    self._icon_ref = photo  # Защита от Garbage Collector
+            except Exception as e:
+                logger.debug(f"Ошибка установки иконки главного окна: {e}")
+
+    def _create_tray_image(self):
+        """Загружает изображение иконки для системного трея."""
+        from app.utils.paths import get_asset_path
+        icon_path = get_asset_path("icon.ico")
+        try:
+            if icon_path.exists():
+                return Image.open(icon_path).convert("RGBA")
+        except Exception as e:
+            logger.debug(f"Не удалось загрузить иконку для трея из {icon_path}: {e}")
+
+        # Резервный вариант, если файла нет
+        image = Image.new('RGB', (64, 64), color=(14, 14, 26))
+        dc = ImageDraw.Draw(image)
+        dc.ellipse((16, 16, 48, 48), fill=(166, 227, 161))
+        return image
 
     def _build_ui(self):
         self.notebook = ttk.Notebook(self.root)

@@ -85,6 +85,8 @@ jobs:
                          --include-package=uvicorn \
                          --include-package=plyer \
                          --include-package=app \
+                         --windows-icon-from-ico=assets/icon.ico \
+                         --include-data-dir=assets=assets \
                          --file-version=${{ env.WIN_VERSION }} \
                          --product-version=${{ env.WIN_VERSION }} \
                          --windows-company-name=Vadim0102 \
@@ -112,6 +114,8 @@ jobs:
                          --include-package=uvicorn \
                          --include-package=plyer \
                          --include-package=app \
+                         --windows-icon-from-ico=assets/icon.ico \
+                         --include-data-dir=assets=assets \
                          --file-version=${{ env.WIN_VERSION }} \
                          --product-version=${{ env.WIN_VERSION }} \
                          --windows-company-name=Vadim0102 \
@@ -155,6 +159,7 @@ jobs:
                          --include-package=uvicorn \
                          --include-package=plyer \
                          --include-package=app \
+                         --include-data-dir=assets=assets \
                          --file-version=${{ env.WIN_VERSION }} \
                          --product-version=${{ env.WIN_VERSION }} \
                          --output-filename=StreamTail \
