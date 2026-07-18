@@ -8,7 +8,7 @@ def load_config() -> dict:
 
     # Дефолтная конфигурация при первом запуске
     default_config = {
-        "app": {"check_interval": 15, "version": "2.4.0"},  # VERSION
+        "app": {"check_interval": 15, "version": "2.5.0"},  # VERSION
         "favorites": {"games": ["Just Chatting", "Разговоры", "Игры", "Retro"]},
         "platforms": {
             "twitch": {"enabled": True, "client_id": "", "client_secret": ""},
