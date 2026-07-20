@@ -29,7 +29,13 @@ class PluginManager:
                     logger.error(f"Ошибка загрузки плагина {platform_name}: {e}")
 
     def get(self, name: str) -> BasePlugin:
-        return self.plugins.get(name)
+        if not name:
+            return None
+        # Регистронезависимый поиск плагина во избежание несовпадения
+        for k, v in self.plugins.items():
+            if k.lower() == name.lower():
+                return v
+        return None
 
     def all(self) -> dict:
         return self.plugins

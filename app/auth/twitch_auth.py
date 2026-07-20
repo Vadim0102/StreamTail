@@ -19,7 +19,7 @@ TOKEN_URL = "https://id.twitch.tv/oauth2/token"
 REVOKE_URL = "https://id.twitch.tv/oauth2/revoke"
 USERS_URL = "https://api.twitch.tv/helix/users"
 REDIRECT_URI = "http://localhost:19234/callback"
-SCOPES = "channel:manage:broadcast user:read:email"
+SCOPES = "channel:manage:broadcast user:read:email chat:read chat:edit moderator:manage:chat_messages moderator:manage:banned_users"
 PORT = 19234
 
 
