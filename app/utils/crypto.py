@@ -13,11 +13,44 @@ def get_hardware_id() -> str:
     hw_id = ""
     try:
         if sys.platform == "win32":
-            # Запрос UUID материнской платы через wmic
-            out = subprocess.check_output("wmic csproduct get uuid", shell=True)
-            lines = [line.strip() for line in out.decode().split("\n") if line.strip()]
-            if len(lines) > 1:
-                hw_id = lines[1]
+            # Безопасные параметры для вызова процессов без консоли (избегаем WinError 6 "Неверный дескриптор")
+            # и предотвращаем кратковременное появление черного окна консоли
+            kwargs = {
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.DEVNULL,
+                "shell": True
+            }
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            kwargs["startupinfo"] = startupinfo
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+            try:
+                out = subprocess.check_output("wmic csproduct get uuid", **kwargs)
+                lines = [line.strip() for line in out.decode().split("\n") if line.strip()]
+                if len(lines) > 1:
+                    hw_id = lines[1]
+            except Exception:
+                pass
+
+            # Если wmic не сработал или заблокирован, пробуем получить MachineGuid напрямую из реестра
+            if not hw_id or hw_id.upper() == "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF":
+                try:
+                    import winreg
+                    registry_key = winreg.OpenKey(
+                        winreg.HKEY_LOCAL_MACHINE,
+                        r"SOFTWARE\Microsoft\Cryptography",
+                        0,
+                        winreg.KEY_READ | winreg.KEY_WOW64_64KEY
+                    )
+                    value, _ = winreg.QueryValueEx(registry_key, "MachineGuid")
+                    winreg.CloseKey(registry_key)
+                    if value:
+                        hw_id = str(value).strip()
+                except Exception:
+                    pass
         elif sys.platform == "darwin":
             out = subprocess.check_output("system_profiler SPHardwareDataType | grep 'Hardware UUID'", shell=True)
             hw_id = out.decode().split(":")[1].strip()

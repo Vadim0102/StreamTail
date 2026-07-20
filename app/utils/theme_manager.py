@@ -30,12 +30,15 @@ THEMES = {
 
 
 def get_current_theme_name() -> str:
-    return db.get_setting("theme_name", "Темная (Catppuccin)")
+    val = db.get_setting("theme_name", "Темная (Catppuccin)")
+    if val is None or val not in THEMES:
+        return "Темная (Catppuccin)"
+    return val
 
 
 def get_theme_colors() -> dict:
     name = get_current_theme_name()
-    return THEMES.get(name, THEMES["Темная (Catppuccin)"])
+    return THEMES[name]
 
 
 def apply_theme(root) -> dict:

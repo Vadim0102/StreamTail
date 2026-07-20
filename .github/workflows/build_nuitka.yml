@@ -128,13 +128,7 @@ jobs:
 
         cp build_onefile/StreamTail-Onefile.exe build_dist/StreamTail-Onefile.exe
 
-    # --- Windows: Сборка обоих инсталляторов ---
-    - name: Compile Windows Onefile Installer
-      if: matrix.os == 'windows-latest'
-      uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
-      with:
-        path: installer_onefile.iss
-
+    # --- Windows: Сборка только полного инсталлятора ---
     - name: Compile Windows Full Installer
       if: matrix.os == 'windows-latest'
       uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
@@ -145,7 +139,6 @@ jobs:
       if: matrix.os == 'windows-latest'
       shell: bash
       run: |
-        cp build_installer/StreamTail-Onefile-Installer.exe build_dist/StreamTail-Onefile-Installer.exe
         cp build_installer/StreamTail-Full-Installer.exe build_dist/StreamTail-Full-Installer.exe
 
     # --- Linux & macOS: Стандартная сборка ---
@@ -195,7 +188,6 @@ jobs:
         path: |
           build_dist/StreamTail-Onefile.exe
           build_dist/StreamTail-Portable.zip
-          build_dist/StreamTail-Onefile-Installer.exe
           build_dist/StreamTail-Full-Installer.exe
 
     - name: Upload Linux Artifact

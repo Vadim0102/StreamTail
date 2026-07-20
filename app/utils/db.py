@@ -76,7 +76,8 @@ def init_db():
 
 def get_setting(key: str, default=None):
     init_db()
-    return _settings_cache.get(key, default)
+    val = _settings_cache.get(key)
+    return default if val is None else val
 
 
 def set_setting(key: str, value):

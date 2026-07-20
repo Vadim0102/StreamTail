@@ -1,5 +1,5 @@
 #define MyAppName "StreamTail"
-#define MyAppVersion "2.4.0"
+#define MyAppVersion "2.5.1"
 #define MyAppPublisher "Vadim0102"
 #define MyAppURL "https://github.com/Vadim0102/StreamTail"
 #define MyAppExeName "StreamTail.exe"
@@ -12,7 +12,7 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-DefaultDirName={localappdata}\Programs\{#MyAppName}
+DefaultDirName={localappdata}\{#MyAppName}
 DisableDirPage=yes
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
