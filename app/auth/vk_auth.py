@@ -1,7 +1,5 @@
-"""
-VK Video Live OAuth2 — Implicit Flow (Без обмена кода).
-"""
 import time
+import secrets
 import webbrowser
 from urllib.parse import urlencode
 
@@ -16,11 +14,13 @@ PORT = 19234
 
 async def authenticate(client_id: str, client_secret: str) -> bool:
     auth_url = "https://auth.live.vkvideo.ru/app/oauth2/authorize"
+    state = secrets.token_urlsafe(16)
     params = {
         "client_id": client_id,
         "redirect_uri": REDIRECT_URI,
-        "response_type": "token",  # ИСПОЛЬЗУЕМ IMPLICIT FLOW!
+        "response_type": "token",
         "scope": SCOPES,
+        "state": state
     }
     url = f"{auth_url}?{urlencode(params)}"
     logger.info("VK Live: открываем браузер для авторизации...")
@@ -31,21 +31,24 @@ async def authenticate(client_id: str, client_secret: str) -> bool:
         logger.error("VK Live: не удалось получить данные авторизации.")
         return False
 
-    # В Implicit Flow платформа отдает токен сразу в URL браузера
+    # Защита от CSRF-атак
+    if result.get("state") != state:
+        logger.error("VK Live: Ошибка безопасности OAuth: параметр state не совпадает.")
+        return False
+
     if result.get("access_token"):
         set_token("livevk", {
             "access_token": result["access_token"],
-            "refresh_token": "",  # VK не выдает refresh_token при Implicit Flow
+            "refresh_token": "",
             "expires_at": int(time.time()) + result["expires_in"] if result["expires_in"] else 0,
             "client_id": client_id,
             "client_secret": client_secret,
         })
-        logger.info("✅ VK Live: Авторизация успешна (токен получен напрямую)!")
+        logger.info("VK Live: Авторизация успешна!")
         return True
 
     logger.error("VK Live: платформа не вернула токен.")
     return False
 
 async def refresh(client_id: str, client_secret: str, refresh_token: str) -> bool:
-    # Implicit Flow не поддерживает обновление токена, нужно будет нажать "Авторизоваться" еще раз
     return False

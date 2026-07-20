@@ -1,4 +1,5 @@
 import time
+import secrets
 import webbrowser
 from urllib.parse import urlencode
 import httpx
@@ -12,11 +13,12 @@ REDIRECT_URI = "http://localhost:19234/callback"
 PORT = 19234
 
 async def authenticate(client_id: str, client_secret: str) -> bool:
-    # Исключаем scope из параметров авторизации
+    state = secrets.token_urlsafe(16)
     params = {
         "client_id": client_id,
         "redirect_uri": REDIRECT_URI,
         "response_type": "code",
+        "state": state
     }
     url = f"{AUTH_URL}?{urlencode(params)}"
     logger.info("GoodGame: открываем браузер для авторизации...")
@@ -25,6 +27,11 @@ async def authenticate(client_id: str, client_secret: str) -> bool:
     result = await wait_for_oauth_code(port=PORT)
     if not result or not result.get("code"):
         logger.error("GoodGame: не удалось получить код авторизации.")
+        return False
+
+    # Защита от CSRF-атак
+    if result.get("state") != state:
+        logger.error("GoodGame: Ошибка безопасности OAuth: параметр state не совпадает.")
         return False
 
     try:
@@ -60,7 +67,6 @@ async def authenticate(client_id: str, client_secret: str) -> bool:
 
 
 async def refresh(client_id: str, client_secret: str, refresh_token: str) -> bool:
-    """Автоматически обновляет истекший Access Token через Refresh Token."""
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(TOKEN_URL, data={

@@ -1,32 +1,3 @@
-"""
-GoodGame Integration Plugin.
-
-========================================================================================
-                                     GOODGAME API MAP
-========================================================================================
-
-1. ПОЛУЧЕНИЕ STREAM ID ИЗ ТОКЕНА (Для авторизованных):
-   • GET https://goodgame.ru/api/4/user
-   • Headers: Authorization: Bearer <token>
-   • Response: {"id": user_id, "stream": {"id": 221841, "title": "..."}}
-
-2. ЧТЕНИЕ СТАТУСА КАНАЛА (По ID стрима):
-   • GET https://goodgame.ru/api/4/streams/{stream_id}
-   • Response: {"online": true, "viewers": 150, "title": "...", "gameObj": {"title": "Minecraft"}}
-
-3. ПОИСК ИГР (Глубоко вложенная структура):
-   • GET https://goodgame.ru/api/4/games?query={game_name}
-   • Response: {"games": {"list": {"list": [{"id": 27812, "title": "Minecraft"}]}}}
-
-4. ОБНОВЛЕНИЕ СТРИМА (Официальный Студийный эндпоинт - Выявлено по HAR-анализу браузера!):
-   • POST https://goodgame.ru/api/4/streams/for-helpers/game-title?id={stream_id}
-   • Headers: Authorization: Bearer <token>; Content-Type: application/json
-   • Body (JSON): {"id": int(stream_id), "title": "New Title", "gameId": int(category_id)}
-     * Важно: При записи GoodGame требует одновременной отправки Названия и Игры, поэтому 
-       плагин реализует Read-Modify-Write (предварительно читает текущую пару через GET).
-========================================================================================
-"""
-
 import time
 import httpx
 from app.auth.goodgame_auth import TOKEN_URL

@@ -1,36 +1,3 @@
-"""
-VK Video Live Integration Plugin (compatible with VK Play Live).
-
-========================================================================================
-                                     VK LIVE API MAP
-========================================================================================
-
-1. ЧТЕНИЕ СТАТУСА (Публичный продакшн эндпоинт):
-   • GET https://api.live.vkvideo.ru/v1/blog/{owner_id}/public_video_stream
-   • Response:
-     {
-       "isOnline": true/false, "title": "Stream title",
-       "category": {"id": "uuid", "title": "Game name"},
-       "count": {"viewers": 150}
-     }
-
-2. ПОИСК КАТЕГОРИЙ (Публичный продакшн эндпоинт):
-   • GET https://api.live.vkvideo.ru/v1/public_video_stream/category/?search={game_name}
-   • Response: {"data": [{"id": "aa7162db-...", "title": "Dota 2"}]}
-
-3. ОБНОВЛЕНИЕ СТРИМА (Защищенный Студийный эндпоинт - Метод PUT!):
-   • PUT https://api.live.vkvideo.ru/v1/channel/{owner_id}/manage/stream
-   • Headers:
-     - Authorization: Bearer <accessToken_из_localStorage>
-     - X-From-Id: vkplay.live (Официальный Client ID сайта VK Live, подставляется плагином)
-     - Content-Type: application/x-www-form-urlencoded
-   • Body (Form-Data):
-     - category_id: "uuid"
-     - title_data: JSON-сериализованный блок rich-text текста VK Video:
-       '[{"type":"text","content":"[\\\"Stream title\\\",\\\"unstyled\\\",[]]","modificator":""}]'
-========================================================================================
-"""
-
 import json
 import httpx
 from app.plugins.base import BasePlugin

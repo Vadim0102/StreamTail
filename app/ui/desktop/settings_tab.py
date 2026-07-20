@@ -2,6 +2,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from app.utils import db
 from app.utils.config import save_config
+from app.utils.paths import get_asset_path
+from app.utils.logger import logger
 
 
 class CollapsibleInstruction(ttk.Frame):
@@ -27,42 +29,21 @@ class CollapsibleInstruction(ttk.Frame):
         )
         self.text_widget.pack(fill="both", expand=True)
 
-        instructions = (
-            "🔑 ОБЩИЙ REDIRECT URI для всех платформ: http://localhost:19234/callback\n\n"
-            "🎮 1. TWITCH:\n"
-            "   • Перейдите на: https://dev.twitch.tv/console\n"
-            "   • Зарегистрируйте приложение. В поле 'OAuth Redirect URL' укажите: http://localhost:19234/callback\n"
-            "   • Скопируйте 'Client ID' и сгенерируйте 'Client Secret'.\n\n"
-            "🎥 2. YOUTUBE (Google Cloud):\n"
-            "   • Перейдите на: https://console.cloud.google.com/\n"
-            "   • Создайте проект, перейдите в Библиотеку API и включите 'YouTube Data API v3'.\n"
-            "   • В разделе 'Учетные данные' создайте 'Идентификатор клиента OAuth 2.0' (Веб-приложение).\n"
-            "   • Введите разрешенный URI перенаправления: http://localhost:19234/callback\n"
-            "   • Заберите ваши 'Client ID' и 'Client Secret'.\n\n"
-            "🌐 3. VK LIVE (Авторизация в обход ограничений сторонних приложений):\n"
-            "   • Owner ID: Введите имя вашего канала в VK (то, что написано в конце ссылки, например, 'vadimzaa' или цифровой ID блога).\n"
-            "   • Скопируйте официальный токен сайта (Client ID/Secret заполнять не требуется!):\n"
-            "     1. Откройте сайт https://live.vkvideo.ru в вашем обычном браузере, где выполнен вход.\n"
-            "     2. Нажмите F12 (или Ctrl+Shift+I) и перейдите во вкладку Application (Приложение / Хранилище).\n"
-            "     3. Слева раскройте ветку 'Local Storage' (Локальное хранилище) и выберите адрес 'https://live.vkvideo.ru'.\n"
-            "     4. Справа найдите ключ с именем 'auth' и скопируйте всю его длинную JSON-строку (она начинается с {\"accessToken\": ...}).\n"
-            "     5. Вставьте эту скопированную строку целиком в поле 'Токен' для VK LIVE ниже. Плагин сам её расшифрует!\n\n"
-            "🏆 4. GOODGAME:\n"
-            "   • Перейдите в настройки своего профиля GoodGame -> вкладка OAuth / Разработчикам.\n"
-            "   • Зарегистрируйте приложение, указав Redirect URI: http://localhost:19234/callback\n"
-            "   • Скопируйте Client ID и Client Secret. Внимание: scope указывать не нужно.\n\n"
-            "🇷🇺 5. RUTUBE (Обход блокировок QRATOR):\n"
-            "   • ID Канала: Достаточно указать имя канала (публично) для чтения онлайна.\n"
-            "   • ID Стрима: Скопируйте уникальный ID из адресной страницы страницы трансляции в Студии (например, 'f290551824869de96ec29760e731385d' из ссылки https://studio.rutube.ru/stream/f290551824869de96ec29760e731385d).\n"
-            "   • Токен: Выгрузите куки RUTUBE через Cookie Quick Manager (JSON) или Get cookies.txt LOCALLY (Netscape) и вставьте весь скопированный текст целиком в поле Токен. Плагин автоматически обнаружит куки, вытащит необходимые CSRF-токены защиты и сможет менять заголовки в обход Cloudflare!\n\n"
-            "💚 6. KICK:\n"
-            "   • Имя канала: введите имя. Если случайно ввели ссылку, плагин очистит её сам.\n"
-            "   • Токен (Два метода на выбор):\n"
-            "     а) ОФИЦИАЛЬНЫЙ API (Рекомендуется): Зарегистрируйте приложение в кабинете разработчика https://kick.com/settings/developer , скопируйте выданный Bearer Token и вставьте его сюда. Этот метод работает на 100% надежно и никогда не блокируется Cloudflare. URL перенаправления: http://localhost:19234/callback\n"
-            "     б) НЕОФИЦИАЛЬНЫЙ API (Через Cookies браузера): Откройте сайт Kick.com в режиме инкогнито или в обычном браузере, где вы авторизованы. Нажмите F12 -> перейдите во вкладку Network (Сеть). Обновите страницу или отправьте тестовое сообщение в чат. Найдите любой уходящий запрос к сайту, скопируйте всю длинную строку из заголовка 'Cookie' (в ней содержатся session_token, cf_clearance и XSRF-TOKEN) и вставьте её целиком сюда. Плагин автоматически обнаружит куки, вытащит необходимые CSRF-токены защиты и сможет менять заголовки в обход Cloudflare!"
-        )
+        # Динамическая загрузка внешней инструкции
+        instructions = self._load_instructions()
         self.text_widget.insert("1.0", instructions)
         self.text_widget.config(state="disabled")
+
+    def _load_instructions(self) -> str:
+        try:
+            path = get_asset_path("instructions.txt")
+            if path.exists():
+                with open(path, "r", encoding="utf-8") as f:
+                    return f.read()
+        except Exception as e:
+            logger.debug(f"Не удалось загрузить инструкции из внешнего файла: {e!r}")
+
+        return "Ошибка: Файл инструкций 'assets/instructions.txt' не найден."
 
     def toggle(self):
         if self.collapsed:
@@ -82,29 +63,24 @@ class SettingsTab(ttk.Frame):
         self._build_ui()
 
     def _build_ui(self):
-        # 1. Закрепленный нижний бар (Bottom Bar) для кнопки Сохранить (она всегда прижата к низу)
         bottom_bar = ttk.Frame(self, padding=(0, 10, 0, 0))
         bottom_bar.pack(side="bottom", fill="x")
 
         self.btn_save = ttk.Button(bottom_bar, text="💾 Сохранить настройки", command=self.save_settings)
         self.btn_save.pack(fill="x")
 
-        # 2. Создаем независимую скроллируемую область для полей настроек (без жесткого цвета фона)
         self.canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0)
         scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.scrollable_frame = ttk.Frame(self.canvas, padding=10)
 
-        # Регулируем размер прокрутки
         self.scrollable_frame.bind(
             "<Configure>",
             lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         )
 
-        # Сохраняем окно холста
         self.canvas_window = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
         self.canvas.configure(yscrollcommand=scrollbar.set)
 
-        # УЛУЧШЕНИЕ: Растягиваем внутренний фрейм настроек на ВСЮ ширину при изменении размера окна!
         self.canvas.bind(
             "<Configure>",
             lambda e: self.canvas.itemconfig(self.canvas_window, width=e.width)
@@ -119,11 +95,9 @@ class SettingsTab(ttk.Frame):
             font=("Segoe UI", 16, "bold")
         ).pack(anchor="w", pady=(0, 10))
 
-        # Развертываемая инструкция
         self.instructions = CollapsibleInstruction(self.scrollable_frame)
         self.instructions.pack(fill="x", pady=(0, 15))
 
-        # --- Основные настройки ---
         app_frame = ttk.LabelFrame(self.scrollable_frame, text=" Основные настройки ", padding=10)
         app_frame.pack(fill="x", pady=5)
 
@@ -135,7 +109,6 @@ class SettingsTab(ttk.Frame):
         )
         self.cb_tray.pack(anchor="w", pady=5)
 
-        # Интервал проверки
         check_frame = ttk.Frame(app_frame)
         check_frame.pack(fill="x", pady=5)
         ttk.Label(check_frame, text="Интервал проверки статуса (сек):").pack(side="left")
@@ -143,7 +116,6 @@ class SettingsTab(ttk.Frame):
         self.entry_interval = ttk.Entry(check_frame, textvariable=self.interval_var, width=10)
         self.entry_interval.pack(side="left", padx=10)
 
-        # Поле ввода Прокси
         proxy_frame = ttk.Frame(app_frame)
         proxy_frame.pack(fill="x", pady=5)
         ttk.Label(proxy_frame, text="Глобальный прокси-сервер (http/socks5):").pack(side="left")
@@ -151,7 +123,6 @@ class SettingsTab(ttk.Frame):
         self.entry_proxy = ttk.Entry(proxy_frame, textvariable=self.proxy_var, width=35)
         self.entry_proxy.pack(side="left", padx=10)
 
-        # Выбор темы оформления
         theme_frame = ttk.Frame(app_frame)
         theme_frame.pack(fill="x", pady=5)
         ttk.Label(theme_frame, text="Тема оформления интерфейса:").pack(side="left")
@@ -167,7 +138,6 @@ class SettingsTab(ttk.Frame):
         )
         self.combo_theme.pack(side="left", padx=10)
 
-        # --- Настройки платформ ---
         self.platform_entries = {}
         platforms_config = self.app_core.config.get("platforms", {})
 
@@ -221,18 +191,15 @@ class SettingsTab(ttk.Frame):
                 self.platform_entries[plat_name][key] = var
                 row += 1
 
-        # КЛЮЧЕВОЕ УЛУЧШЕНИЕ: Рекурсивно привязываем прокрутку колесика мыши ко всем элементам!
         self._bind_mouse_wheel(self)
 
     def _on_mouse_wheel(self, event):
-        """Кроссплатформенный обработчик прокрутки колесика мыши."""
         if event.num == 5 or event.delta < 0:
             self.canvas.yview_scroll(1, "units")
         elif event.num == 4 or event.delta > 0:
             self.canvas.yview_scroll(-1, "units")
 
     def _bind_mouse_wheel(self, widget):
-        """Рекурсивно биндит события прокрутки мыши на все вложенные элементы формы."""
         widget.bind("<MouseWheel>", self._on_mouse_wheel, add="+")
         widget.bind("<Button-4>", self._on_mouse_wheel, add="+")
         widget.bind("<Button-5>", self._on_mouse_wheel, add="+")
@@ -240,7 +207,6 @@ class SettingsTab(ttk.Frame):
             self._bind_mouse_wheel(child)
 
     def save_settings(self):
-        # Блокируем кнопку сохранения для защиты от дребезга и двойных кликов!
         self.btn_save.config(state="disabled")
         try:
             try:
@@ -257,7 +223,6 @@ class SettingsTab(ttk.Frame):
             new_config["app"]["check_interval"] = check_interval
             new_config["app"]["proxy_url"] = self.proxy_var.get().strip()
 
-            # СОХРАНЯЕМ ТЕМУ ОФОРМЛЕНИЯ
             selected_theme = self.theme_var.get()
             db.set_setting("theme_name", selected_theme)
 
@@ -274,7 +239,6 @@ class SettingsTab(ttk.Frame):
 
             self.app_core.update_app_config(new_config)
 
-            # Динамически применяем тему ко всем открытым окнам на лету!
             from app.utils import theme_manager
             theme_manager.apply_theme(self.app_core.gui.root)
             self.app_core.gui.apply_theme_to_custom_widgets()

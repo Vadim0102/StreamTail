@@ -35,14 +35,13 @@ class _OAuthCallbackHandler(BaseHTTPRequestHandler):
     result_error: str | None = None
     result_access_token: str | None = None
     result_expires_in: int = 0
+    result_state: str | None = None
 
     def do_GET(self):
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query)
 
-        # ПЕРЕХВАТЧИК ДЛЯ IMPLICIT FLOW:
-        # Браузер не отправляет то, что после # на сервер. Если параметров нет, отдаем JS-скрипт,
-        # который превратит # в ? и перезагрузит страницу, чтобы Python увидел токен.
+        # ПЕРЕХВАТЧИК ДЛЯ IMPLICIT FLOW (Замена hash '#' на query '?')
         if not parsed.query and self.path == "/callback":
             self.send_response(200)
             self.end_headers()
@@ -61,13 +60,15 @@ class _OAuthCallbackHandler(BaseHTTPRequestHandler):
         error = params.get("error", [None])[0]
         access_token = params.get("access_token", [None])[0]
         expires_in = params.get("expires_in", ["0"])[0]
+        state = params.get("state", [None])[0]
 
         _OAuthCallbackHandler.result_code = code
         _OAuthCallbackHandler.result_error = error
         _OAuthCallbackHandler.result_access_token = access_token
+        _OAuthCallbackHandler.result_state = state
         try:
             _OAuthCallbackHandler.result_expires_in = int(expires_in)
-        except:
+        except Exception:
             _OAuthCallbackHandler.result_expires_in = 0
 
         if code or access_token:
@@ -88,6 +89,7 @@ async def wait_for_oauth_code(port: int = 19234, timeout: int = 120) -> dict | N
     _OAuthCallbackHandler.result_error = None
     _OAuthCallbackHandler.result_access_token = None
     _OAuthCallbackHandler.result_expires_in = 0
+    _OAuthCallbackHandler.result_state = None
 
     server = HTTPServer(("localhost", port), _OAuthCallbackHandler)
     server.timeout = 1
@@ -115,9 +117,9 @@ async def wait_for_oauth_code(port: int = 19234, timeout: int = 120) -> dict | N
         return None
 
     logger.debug("OAuth callback: данные получены успешно.")
-    # Теперь сервер возвращает словарь со всеми возможными параметрами!
     return {
         "code": _OAuthCallbackHandler.result_code,
         "access_token": _OAuthCallbackHandler.result_access_token,
-        "expires_in": _OAuthCallbackHandler.result_expires_in
+        "expires_in": _OAuthCallbackHandler.result_expires_in,
+        "state": _OAuthCallbackHandler.result_state
     }

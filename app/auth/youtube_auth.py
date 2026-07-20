@@ -1,10 +1,5 @@
-"""
-YouTube OAuth2 — Authorization Code Flow (Google).
-
-Scopes: youtube.force-ssl (чтение/запись трансляций).
-После авторизации автоматически ищется активный/ближайший broadcast_id.
-"""
 import time
+import secrets
 import webbrowser
 from urllib.parse import urlencode
 
@@ -24,17 +19,15 @@ BROADCASTS_URL = "https://youtube.googleapis.com/youtube/v3/liveBroadcasts"
 
 
 async def authenticate(client_id: str, client_secret: str) -> bool:
-    """
-    Открывает браузер с Google OAuth, ждёт callback,
-    сохраняет токены и определяет broadcast_id.
-    """
+    state = secrets.token_urlsafe(16)
     params = {
         "client_id": client_id,
         "redirect_uri": REDIRECT_URI,
         "response_type": "code",
         "scope": SCOPES,
         "access_type": "offline",
-        "prompt": "consent",  # Гарантирует получение refresh_token
+        "prompt": "consent",
+        "state": state
     }
     url = f"{AUTH_URL}?{urlencode(params)}"
     logger.info("YouTube: открываем браузер для авторизации Google...")
@@ -43,6 +36,11 @@ async def authenticate(client_id: str, client_secret: str) -> bool:
     result = await wait_for_oauth_code(port=PORT)
     if not result or not result.get("code"):
         logger.error("YouTube: не удалось получить код авторизации.")
+        return False
+
+    # Защита от CSRF-атак
+    if result.get("state") != state:
+        logger.error("YouTube: Ошибка безопасности OAuth: параметр state не совпадает.")
         return False
 
     return await _exchange_code(client_id, client_secret, result["code"])
@@ -69,10 +67,8 @@ async def _exchange_code(client_id: str, client_secret: str, code: str) -> bool:
         refresh_token = data.get("refresh_token", "")
         expires_in = data.get("expires_in", 3600)
 
-        # Ищем активный broadcast (публичный)
         broadcast_id = await _fetch_broadcast_id(access_token)
 
-        from app.auth.token_store import set_token # Локальный импорт
         set_token("youtube", {
             "access_token": access_token,
             "refresh_token": refresh_token,
@@ -93,11 +89,6 @@ async def _exchange_code(client_id: str, client_secret: str, code: str) -> bool:
 
 
 async def _fetch_broadcast_id(access_token: str) -> str:
-    """
-    Ищет активную или ближайшую трансляцию.
-    Порядок: live → upcoming → все.
-    Приоритет отдается публичным трансляциям (privacyStatus == 'public') [1.2].
-    """
     headers = {"Authorization": f"Bearer {access_token}"}
     for status in ("active", "upcoming", "all"):
         try:
@@ -108,14 +99,13 @@ async def _fetch_broadcast_id(access_token: str) -> str:
                         "part": "id,snippet,status",
                         "broadcastStatus": status,
                         "broadcastType": "all",
-                        "maxResults": 15,  # Запрашиваем до 15 трансляций, чтобы найти публичную
+                        "maxResults": 15,
                     },
                     headers=headers,
                 )
                 data = resp.json()
                 items = data.get("items", [])
                 if items:
-                    # 1. Сначала приоритизируем публичные (public) трансляции
                     for item in items:
                         privacy = item.get("status", {}).get("privacyStatus", "").lower()
                         if privacy == "public":
@@ -123,9 +113,8 @@ async def _fetch_broadcast_id(access_token: str) -> str:
                             logger.debug(f"YouTube: найден публичный broadcast_id={bid} (status={status})")
                             return bid
 
-                    # 2. Если публичных нет, выбираем первую доступную
                     bid = items[0]["id"]
-                    logger.debug(f"YouTube: публичный стрим не найден, выбран первый доступный broadcast_id={bid} (status={status})")
+                    logger.debug(f"YouTube: выбран первый доступный broadcast_id={bid} (status={status})")
                     return bid
         except Exception as e:
             logger.error(f"YouTube: ошибка поиска broadcast: {e}")
@@ -133,7 +122,6 @@ async def _fetch_broadcast_id(access_token: str) -> str:
 
 
 async def refresh(client_id: str, client_secret: str, refresh_token: str) -> bool:
-    """Обновляет access_token через refresh_token."""
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(TOKEN_URL, data={

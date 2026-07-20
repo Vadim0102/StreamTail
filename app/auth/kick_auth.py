@@ -18,24 +18,13 @@ SCOPES = "user:read channel:read channel:write"
 
 
 def _generate_pkce() -> tuple[str, str]:
-    """Генерирует криптографически стойкие PKCE-ключи (code_verifier и S256 code_challenge)."""
-    # Verifier должен быть URL-safe строкой длиной от 43 до 128 символов
     verifier = secrets.token_urlsafe(64)
-
-    # Хэшируем verifier алгоритмом SHA-256
     sha256_hash = hashlib.sha256(verifier.encode('utf-8')).digest()
-
-    # Кодируем в Base64Url без символов заполнения (=)
     challenge = base64.urlsafe_b64encode(sha256_hash).decode('utf-8').rstrip('=')
     return verifier, challenge
 
 
 async def authenticate(client_id: str, client_secret: str) -> bool:
-    """
-    Выполняет официальный Kick OAuth 2.1 с PKCE.
-    Открывает браузер, ловит код авторизации, обменивает его на токен
-    и сохраняет User Access Token в TokenStore.
-    """
     verifier, challenge = _generate_pkce()
     state = secrets.token_urlsafe(16)
 
@@ -56,6 +45,11 @@ async def authenticate(client_id: str, client_secret: str) -> bool:
     result = await wait_for_oauth_code(port=PORT)
     if not result or not result.get("code"):
         logger.error("Kick: не удалось получить код авторизации.")
+        return False
+
+    # Защита от CSRF-атак
+    if result.get("state") != state:
+        logger.error("Kick: Ошибка безопасности OAuth: параметр state не совпадает.")
         return False
 
     try:
@@ -86,7 +80,7 @@ async def authenticate(client_id: str, client_secret: str) -> bool:
             "client_secret": client_secret,
         })
 
-        logger.info("✅ Kick: Успешно получен официальный токен пользователя (User Access Token)!")
+        logger.info("Kick: Успешно получен официальный токен пользователя!")
         return True
 
     except Exception as e:
@@ -95,7 +89,6 @@ async def authenticate(client_id: str, client_secret: str) -> bool:
 
 
 async def refresh(client_id: str, client_secret: str, refresh_token: str) -> bool:
-    """Автоматически продлевает User Access Token, когда он истекает."""
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(TOKEN_URL, data={
