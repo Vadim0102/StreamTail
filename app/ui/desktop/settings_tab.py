@@ -4,6 +4,7 @@ from app.utils import db
 from app.utils.config import save_config
 from app.utils.paths import get_asset_path
 from app.utils.logger import logger
+from app.utils import theme_manager
 
 
 class CollapsibleInstruction(ttk.Frame):
@@ -29,7 +30,6 @@ class CollapsibleInstruction(ttk.Frame):
         )
         self.text_widget.pack(fill="both", expand=True)
 
-        # Динамическая загрузка внешней инструкции
         instructions = self._load_instructions()
         self.text_widget.insert("1.0", instructions)
         self.text_widget.config(state="disabled")
@@ -127,7 +127,6 @@ class SettingsTab(ttk.Frame):
         theme_frame.pack(fill="x", pady=5)
         ttk.Label(theme_frame, text="Тема оформления интерфейса:").pack(side="left")
 
-        from app.utils import theme_manager
         self.theme_var = tk.StringVar(value=theme_manager.get_current_theme_name())
         self.combo_theme = ttk.Combobox(
             theme_frame,
@@ -162,7 +161,7 @@ class SettingsTab(ttk.Frame):
                 fields.append(("owner_id", "Owner ID (ID или имя канала):"))
                 fields.append(("client_id", "Client ID (Необязательно):"))
                 fields.append(("client_secret", "Client Secret (Необязательно):"))
-                fields.append(("token", "Токен (JSON 'auth' из LocalStorage):"))
+                fields.append(("token", "Токен (JSON 'auth' или Cookies из браузера):"))
 
             if plat_name == "goodgame":
                 fields.append(("channel", "Имя канала (Slug/Username):"))
@@ -181,14 +180,34 @@ class SettingsTab(ttk.Frame):
             row = 1
             for key, label_text in fields:
                 ttk.Label(p_frame, text=label_text).grid(row=row, column=0, sticky="w", pady=2)
-                var = tk.StringVar(value=str(plat_cfg.get(key, "")))
-                entry = ttk.Entry(p_frame, textvariable=var, width=45)
-                if key in ["client_secret", "token"]:
-                    entry.config(show="*")
-                entry.grid(row=row, column=1, sticky="ew", padx=5, pady=2)
-                p_frame.columnconfigure(1, weight=1)
 
-                self.platform_entries[plat_name][key] = var
+                # Защита от обрезки при вставке многострочных файлов кук
+                is_multiline_cookie = (key == "token" and plat_name in ["livevk", "kick", "rutube"])
+
+                if is_multiline_cookie:
+                    text_val = str(plat_cfg.get(key, ""))
+                    text_widget = tk.Text(
+                        p_frame,
+                        height=4,
+                        wrap="none",
+                        font=("Segoe UI", 9),
+                        background="#2d2d2d" if "Темная" in theme_manager.get_current_theme_name() else "#ffffff",
+                        foreground="#f9f9f9" if "Темная" in theme_manager.get_current_theme_name() else "#1c1c1c",
+                        relief=tk.SOLID,
+                        borderwidth=1
+                    )
+                    text_widget.insert("1.0", text_val)
+                    text_widget.grid(row=row, column=1, sticky="ew", padx=5, pady=2)
+                    self.platform_entries[plat_name][key] = text_widget
+                else:
+                    var = tk.StringVar(value=str(plat_cfg.get(key, "")))
+                    entry = ttk.Entry(p_frame, textvariable=var, width=45)
+                    if key in ["client_secret", "token"]:
+                        entry.config(show="*")
+                    entry.grid(row=row, column=1, sticky="ew", padx=5, pady=2)
+                    self.platform_entries[plat_name][key] = var
+
+                p_frame.columnconfigure(1, weight=1)
                 row += 1
 
         self._bind_mouse_wheel(self)
@@ -235,11 +254,13 @@ class SettingsTab(ttk.Frame):
 
                 for key, var in vars_dict.items():
                     if key != "enabled":
-                        plat_cfg[key] = var.get().strip()
+                        if isinstance(var, tk.Text):
+                            plat_cfg[key] = var.get("1.0", tk.END).strip()
+                        else:
+                            plat_cfg[key] = var.get().strip()
 
             self.app_core.update_app_config(new_config)
 
-            from app.utils import theme_manager
             theme_manager.apply_theme(self.app_core.gui.root)
             self.app_core.gui.apply_theme_to_custom_widgets()
 

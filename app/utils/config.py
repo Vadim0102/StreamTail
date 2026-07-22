@@ -1,4 +1,5 @@
 from app.utils import db
+from app.core import __version__ as version
 
 def load_config() -> dict:
     # Извлекаем конфигурацию из зашифрованной SQLite
@@ -8,7 +9,7 @@ def load_config() -> dict:
 
     # Дефолтная конфигурация при первом запуске
     default_config = {
-        "app": {"check_interval": 15, "version": "3.0.0"},  # VERSION
+        "app": {"check_interval": 15, "version": version},  # VERSION
         "favorites": {"games": ["Just Chatting", "Разговоры", "Игры", "Retro"]},
         "platforms": {
             "twitch": {"enabled": True, "client_id": "", "client_secret": ""},

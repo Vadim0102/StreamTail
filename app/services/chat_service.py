@@ -115,14 +115,14 @@ class ChatService:
                 try:
                     login = await plugin._fetch_user_login()
                     if login:
+                        # Очищаем никнейм от ведущего @ для надежного сопоставления
+                        if login.startswith("@"):
+                            login = login[1:]
                         author_name = login
                 except Exception as ex:
                     logger.debug(f"ChatService: Не удалось получить имя для эха: {ex!r}")
 
             msg_id = f"echo_{platform}_{int(time.time() * 1000)}"
-
-            if plugin and hasattr(plugin, "register_sent_echo"):
-                plugin.register_sent_echo(msg_id)
 
             echo_msg = ChatMessage(
                 id=msg_id,
@@ -138,7 +138,12 @@ class ChatService:
                 timestamp=int(time.time() * 1000)
             )
 
+            # Публикуем сообщение в шину
             self.event_bus.emit("chat.message_received", echo_msg.to_dict())
+
+            # Регистрируем эхо (перепривязка ID произойдет через 150мс)
+            if plugin and hasattr(plugin, "register_sent_echo"):
+                plugin.register_sent_echo(msg_id)
         except Exception as e:
             logger.error(f"ChatService: Ошибка в _echo_locally: {e!r}")
             logger.error(traceback.format_exc())

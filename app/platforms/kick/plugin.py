@@ -315,3 +315,6 @@ class KickPlugin(BasePlugin):
             logger.debug(f"Kick (Публичный поиск категорий): ошибка: {e!r}")
 
         return None
+
+    async def _fetch_user_login(self) -> str:
+        return self.channel_slug

@@ -204,3 +204,6 @@ class GoodGamePlugin(BasePlugin):
         """Перенаправление во избежание сбоев устаревшего API."""
         from app.auth import goodgame_auth
         return await goodgame_auth.refresh(client_id, client_secret, refresh_token)
+
+    async def _fetch_user_login(self) -> str:
+        return self.channel_slug

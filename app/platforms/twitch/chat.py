@@ -4,6 +4,7 @@ import time
 from app.core.schemas import ChatMessage, ChatAuthor
 from app.utils import http_client
 from app.utils.logger import logger
+from app.core import __version__ as version
 
 
 class TwitchIRCClient:
@@ -54,7 +55,7 @@ class TwitchIRCClient:
         return False
 
     async def _irc_loop(self):
-        backoff = 5  # Стартовый интервал переподключения
+        backoff = 5
 
         while self._chat_running:
             reader, writer = None, None
@@ -72,7 +73,6 @@ class TwitchIRCClient:
                 logger.info(f"Twitch Chat IRC: Подключение к SSL-порту для #{login}...")
                 ssl_context = ssl.create_default_context()
 
-                # Поддержка глобального прокси для чата
                 proxy = http_client.get_proxy_settings()
                 if proxy:
                     logger.debug(f"Twitch Chat IRC: Чат маршрутизируется через прокси-сервер {proxy}")
@@ -83,7 +83,7 @@ class TwitchIRCClient:
                     reader, writer = await asyncio.open_connection("irc.chat.twitch.tv", 6697, ssl=ssl_context)
 
                 self._writer = writer
-                backoff = 5  # Сброс задержки при удачном подключении
+                backoff = 5
 
                 writer.write("CAP REQ :twitch.tv/tags twitch.tv/commands twitch.tv/membership\r\n".encode())
                 writer.write(f"PASS oauth:{self.plugin.token}\r\n".encode())
@@ -115,10 +115,9 @@ class TwitchIRCClient:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                # Экспоненциальный откат (Exponential Backoff) для сетевого сокета
                 logger.error(f"Twitch Chat IRC: ошибка сокета: {e!r}. Реконнект через {backoff}с...")
                 await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 120)  # Ограничение задержки максимум в 2 минуты
+                backoff = min(backoff * 2, 120)
             finally:
                 if writer:
                     try:
@@ -173,22 +172,53 @@ class TwitchIRCClient:
                 bus.emit("chat.message_received", msg.to_dict())
 
     def _parse_irc_message(self, line: str, channel_login: str) -> ChatMessage | None:
+        """Отказоустойчивый парсинг IRC-сообщений, исключающий срез первой буквы."""
         try:
-            if not line.startswith("@"):
-                return None
-            parts = line.split(" ", 4)
-            if len(parts) < 5:
+            if " PRIVMSG " not in line:
                 return None
 
-            tag_str = parts[0][1:]
-            prefix = parts[1]
-            message_text = parts[4][1:]
+            tags = {}
+            if line.startswith("@"):
+                tag_part, rest = line[1:].split(" ", 1)
+                for item in tag_part.split(";"):
+                    if "=" in item:
+                        k, v = item.split("=", 1)
+                        tags[k] = v
+            else:
+                rest = line
 
-            tags = dict(item.split("=", 1) for item in tag_str.split(";") if "=" in item)
+            prefix_and_msg = rest.split(" PRIVMSG ", 1)
+            if len(prefix_and_msg) < 2:
+                return None
+            prefix_part = prefix_and_msg[0]
+            msg_part = prefix_and_msg[1]
 
             msg_id = tags.get("id", "")
-            display_name = tags.get("display-name") or prefix.split("!")[0][1:]
+
+            display_name = tags.get("display-name")
+            if not display_name:
+                nick = prefix_part
+                if nick.startswith(":"):
+                    nick = nick[1:]
+                if "!" in nick:
+                    nick = nick.split("!", 1)[0]
+                display_name = nick
+
             user_id = tags.get("user-id", "")
+
+            # Извлечение точного сообщения с сохранением первой буквы
+            chan_and_text = msg_part.split(" :", 1)
+            if len(chan_and_text) == 2:
+                message_text = chan_and_text[1]
+            else:
+                message_text = msg_part.split(" ", 1)[1] if " " in msg_part else msg_part
+
+            # Серверное время отправки Twitch (в миллисекундах)
+            ts_raw = tags.get("tmi-sent-ts")
+            try:
+                timestamp = int(ts_raw) if ts_raw and ts_raw.isdigit() else int(time.time() * 1000)
+            except Exception:
+                timestamp = int(time.time() * 1000)
 
             is_mod = tags.get("mod") == "1"
             is_sub = tags.get("subscriber") == "1"
@@ -220,15 +250,16 @@ class TwitchIRCClient:
                 platform="twitch",
                 author=author,
                 text=message_text,
-                timestamp=int(time.time() * 1000)
+                timestamp=timestamp
             )
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Ошибка парсинга Twitch сообщения: {e!r}")
             return None
 
     async def _fetch_and_load_chat_history(self, channel_login: str):
         try:
             url = f"https://recent-messages.robotty.de/api/v2/recent-messages/{channel_login}"
-            headers = {"User-Agent": "StreamTail/2.6.0"}
+            headers = {"User-Agent": f"StreamTail/{version}"}
             async with http_client.create_client(timeout=10.0) as client:
                 resp = await client.get(url, headers=headers, params={"limit": 50})
                 if resp.status_code == 200:
@@ -244,5 +275,11 @@ class TwitchIRCClient:
                         msg = self._parse_irc_message(raw_line.strip(), channel_login)
                         if msg:
                             bus.emit("chat.message_received", msg.to_dict())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Twitch Chat: не удалось получить историю чата: {e!r}")
+        finally:
+            # Гарантированное событие завершения выгрузки истории
+            from app.core.service_container import container
+            bus = container.get("event_bus")
+            if bus:
+                bus.emit("chat.history_loaded", {"platform": "twitch"})

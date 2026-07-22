@@ -1,8 +1,5 @@
 import asyncio
-import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import parse_qs, urlparse
-
+from urllib.parse import urlparse, parse_qs
 from app.utils.logger import logger
 
 _SUCCESS_HTML = """
@@ -30,96 +27,100 @@ h1{color:#f38ba8;font-size:2rem}p{color:#fab387}</style></head>
 """.encode("utf-8")
 
 
-class _OAuthCallbackHandler(BaseHTTPRequestHandler):
-    result_code: str | None = None
-    result_error: str | None = None
-    result_access_token: str | None = None
-    result_expires_in: int = 0
-    result_state: str | None = None
-
-    def do_GET(self):
-        parsed = urlparse(self.path)
-        params = parse_qs(parsed.query)
-
-        # ПЕРЕХВАТЧИК ДЛЯ IMPLICIT FLOW (Замена hash '#' на query '?')
-        if not parsed.query and self.path == "/callback":
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"""
-                <!DOCTYPE html><html><body><script>
-                if (window.location.hash) {
-                    window.location.replace("/callback?" + window.location.hash.substring(1));
-                } else {
-                    document.body.innerHTML = "No token data received in URL.";
-                }
-                </script></body></html>
-            """)
-            return
-
-        code = params.get("code", [None])[0]
-        error = params.get("error", [None])[0]
-        access_token = params.get("access_token", [None])[0]
-        expires_in = params.get("expires_in", ["0"])[0]
-        state = params.get("state", [None])[0]
-
-        _OAuthCallbackHandler.result_code = code
-        _OAuthCallbackHandler.result_error = error
-        _OAuthCallbackHandler.result_access_token = access_token
-        _OAuthCallbackHandler.result_state = state
-        try:
-            _OAuthCallbackHandler.result_expires_in = int(expires_in)
-        except Exception:
-            _OAuthCallbackHandler.result_expires_in = 0
-
-        if code or access_token:
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(_SUCCESS_HTML)
-        else:
-            self.send_response(400)
-            self.end_headers()
-            self.wfile.write(_ERROR_HTML)
-
-    def log_message(self, *args):
-        pass
-
-
 async def wait_for_oauth_code(port: int = 19234, timeout: int = 120) -> dict | None:
-    _OAuthCallbackHandler.result_code = None
-    _OAuthCallbackHandler.result_error = None
-    _OAuthCallbackHandler.result_access_token = None
-    _OAuthCallbackHandler.result_expires_in = 0
-    _OAuthCallbackHandler.result_state = None
+    result = {}
+    event = asyncio.Event()
 
-    server = HTTPServer(("localhost", port), _OAuthCallbackHandler)
-    server.timeout = 1
-    loop = asyncio.get_event_loop()
+    async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        try:
+            data = await reader.read(4096)
+            if not data:
+                return
 
-    def _serve():
-        start = time.monotonic()
-        while (
-            _OAuthCallbackHandler.result_code is None
-            and _OAuthCallbackHandler.result_access_token is None
-            and _OAuthCallbackHandler.result_error is None
-            and time.monotonic() - start < timeout
-        ):
-            server.handle_request()
-        server.server_close()
+            request_line = data.decode("utf-8", errors="ignore").split("\r\n")[0]
+            parts = request_line.split(" ")
+            if len(parts) < 2:
+                return
 
-    await loop.run_in_executor(None, _serve)
+            path = parts[1]
+            parsed = urlparse(path)
 
-    if _OAuthCallbackHandler.result_error:
-        logger.warning(f"OAuth callback: ошибка платформы: {_OAuthCallbackHandler.result_error}")
+            # Перехватчик implicit flow (VK Live)
+            if not parsed.query and parsed.path == "/callback":
+                response = (
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: text/html; charset=utf-8\r\n"
+                    "Connection: close\r\n\r\n"
+                    "<!DOCTYPE html><html><body><script>\n"
+                    "if (window.location.hash) {\n"
+                    "    window.location.replace('/callback?' + window.location.hash.substring(1));\n"
+                    "} else {\n"
+                    "    document.body.innerHTML = 'No token data received.';\n"
+                    "}\n"
+                    "</script></body></html>"
+                )
+                writer.write(response.encode("utf-8"))
+                await writer.drain()
+                return
+
+            if parsed.path == "/callback":
+                params = parse_qs(parsed.query)
+                code = params.get("code", [None])[0]
+                error = params.get("error", [None])[0]
+                access_token = params.get("access_token", [None])[0]
+                expires_in = params.get("expires_in", ["0"])[0]
+                state = params.get("state", [None])[0]
+
+                result.update({
+                    "code": code,
+                    "error": error,
+                    "access_token": access_token,
+                    "expires_in": int(expires_in) if expires_in.isdigit() else 0,
+                    "state": state
+                })
+
+                if code or access_token:
+                    html = _SUCCESS_HTML
+                    status_line = "200 OK"
+                else:
+                    html = _ERROR_HTML
+                    status_line = "400 Bad Request"
+
+                response = (
+                    f"HTTP/1.1 {status_line}\r\n"
+                    "Content-Type: text/html; charset=utf-8\r\n"
+                    f"Content-Length: {len(html)}\r\n"
+                    "Connection: close\r\n\r\n"
+                ).encode("utf-8") + html
+
+                writer.write(response)
+                await writer.drain()
+                event.set()
+
+        except Exception as e:
+            logger.debug(f"Ошибка обработки OAuth запроса: {e!r}")
+        finally:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+    server = await asyncio.start_server(handle_connection, "127.0.0.1", port)
+    logger.debug(f"Временный OAuth сервер запущен на порту {port}")
+
+    try:
+        await asyncio.wait_for(event.wait(), timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.warning("OAuth callback: Превышено время ожидания авторизации.")
+        return None
+    finally:
+        server.close()
+        await server.wait_closed()
+        logger.debug("Временный OAuth сервер успешно остановлен.")
+
+    if result.get("error"):
+        logger.warning(f"OAuth callback: ошибка платформы: {result['error']}")
         return None
 
-    if not _OAuthCallbackHandler.result_code and not _OAuthCallbackHandler.result_access_token:
-        logger.warning("OAuth callback: таймаут ожидания.")
-        return None
-
-    logger.debug("OAuth callback: данные получены успешно.")
-    return {
-        "code": _OAuthCallbackHandler.result_code,
-        "access_token": _OAuthCallbackHandler.result_access_token,
-        "expires_in": _OAuthCallbackHandler.result_expires_in,
-        "state": _OAuthCallbackHandler.result_state
-    }
+    return result

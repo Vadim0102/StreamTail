@@ -566,3 +566,6 @@ class RutubePlugin(BasePlugin):
                 return f"RUTUBE Ошибка завершения ({resp.status_code}): {resp.text[:100]}"
         except Exception as e:
             return f"RUTUBE Исключение при завершении: {e!r}"
+
+    async def _fetch_user_login(self) -> str:
+        return self.channel_id

@@ -2,12 +2,13 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime
 import asyncio
+import time
 
 from app.utils.logger import logger
 
 
 class ChatPanelMixin:
-    """Примесь логики вкладки Мультичата для основного GUI."""
+    """Примесь логики Мультичата для основного GUI с умной дебаунс-сортировкой."""
 
     def _build_chat_tab(self):
         frame = self.tab_chat
@@ -50,7 +51,8 @@ class ChatPanelMixin:
         bottom_container.pack(fill=tk.X, side=tk.BOTTOM)
 
         self.reply_indicator_frame = ttk.Frame(bottom_container, padding=(5, 2, 5, 2))
-        self.reply_label = ttk.Label(self.reply_indicator_frame, text="", font=("Segoe UI", 9, "italic"), foreground="#a6e3a1")
+        self.reply_label = ttk.Label(self.reply_indicator_frame, text="", font=("Segoe UI", 9, "italic"),
+                                     foreground="#a6e3a1")
         self.reply_label.pack(side=tk.LEFT)
         ttk.Button(self.reply_indicator_frame, text="✕", command=self.cancel_reply, width=3).pack(side=tk.RIGHT)
 
@@ -82,6 +84,13 @@ class ChatPanelMixin:
         self.reply_parent_id = None
         self.reply_parent_author = None
         self.reply_platform = None
+
+        # Кэш сообщений в памяти
+        self.visible_messages = []
+        self.max_display_messages = 300
+
+        # Переменные управления дебаунс-сортировкой
+        self._sort_timer_id = None
 
     def start_reply(self, platform, author_name, msg_id):
         for val in self.chat_target_combo['values']:
@@ -139,10 +148,112 @@ class ChatPanelMixin:
         text = data.get("text", "")
         msg_id = data.get("id", "")
 
-        self.root.after(0, self._append_chat_message_gui, platform, author_name, text, msg_id, author_id)
+        # Безопасный парсинг и приведение UNIX-времени к миллисекундам
+        raw_ts = data.get("timestamp")
+        if raw_ts:
+            try:
+                val = int(raw_ts)
+                if val < 10000000000:  # В секундах
+                    timestamp = val * 1000
+                elif val > 10000000000000:  # В микросекундах
+                    timestamp = val // 1000
+                else:
+                    timestamp = val
+            except Exception:
+                timestamp = int(time.time() * 1000)
+        else:
+            timestamp = int(time.time() * 1000)
 
-    def _append_chat_message_gui(self, platform, author, text, msg_id, author_id):
+        self.root.after(0, self._process_and_render_message, platform, author_name, text, msg_id, author_id, timestamp)
+
+    def _process_and_render_message(self, platform, author, text, msg_id, author_id, timestamp):
+        # Дедупликация на случай наложения истории
+        if msg_id:
+            for m in self.visible_messages:
+                if m["msg_id"] == msg_id and m["platform"] == platform:
+                    return
+
+        msg_obj = {
+            "platform": platform,
+            "author": author,
+            "text": text,
+            "msg_id": msg_id,
+            "author_id": author_id,
+            "timestamp": timestamp
+        }
+
+        # Анализируем, нарушен ли хронологический порядок на экране
+        is_out_of_order = False
+        if self.visible_messages and timestamp < self.visible_messages[-1]["timestamp"]:
+            is_out_of_order = True
+
+        # Сразу добавляем и отображаем на экране для визуального отклика
+        self.visible_messages.append(msg_obj)
+        self._append_chat_message_gui(platform, author, text, msg_id, author_id, timestamp)
+
+        # Контроль переполнения буфера
+        if len(self.visible_messages) > self.max_display_messages:
+            self.visible_messages.pop(0)
+            self.chat_text.config(state=tk.NORMAL)
+            self.chat_text.delete("1.0", "2.0")
+            self.chat_text.config(state=tk.DISABLED)
+
+        # Если сообщение выбивается из хронологии (загрузка истории), планируем отложенную перерисовку
+        if is_out_of_order:
+            self._schedule_deferred_sort()
+
+    def _schedule_deferred_sort(self):
+        """Реализует паттерн дебаунса (сброс и перезапуск таймера при непрерывном потоке данных)."""
+        if self._sort_timer_id:
+            try:
+                self.root.after_cancel(self._sort_timer_id)
+            except Exception:
+                pass
+
+        # Сортировка запустится ровно через 1.5 секунды ПОСЛЕ того, как поток истории иссякнет
+        self._sort_timer_id = self.root.after(1500, self._deferred_sort_and_redraw)
+
+    def _deferred_sort_and_redraw(self):
+        """Выполняет финальную хронологическую сортировку и перерисовывает экран."""
+        self._sort_timer_id = None
+
+        # Хронологическая сортировка всего накопленного пула
+        self.visible_messages.sort(key=lambda x: x["timestamp"])
+
+        if len(self.visible_messages) > self.max_display_messages:
+            self.visible_messages = self.visible_messages[-self.max_display_messages:]
+
+        self._redraw_all_messages()
+        logger.debug("Multi-chat: Выполнена отложенная хронологическая сортировка сообщений.")
+
+    def _redraw_all_messages(self):
+        """Полная перерисовка текстового виджета на основе отсортированного буфера."""
+        self.chat_text.config(state=tk.NORMAL)
+        self.chat_text.delete("1.0", tk.END)
+
+        # Гарантированное удаление старых мета-тегов из памяти виджета для прохождения защиты от дубликатов
+        for tag in list(self.chat_text.tag_names()):
+            if tag.startswith("meta|"):
+                self.chat_text.tag_delete(tag)
+
+        self.chat_text.config(state=tk.DISABLED)
+
+        # Отрисовываем заново весь отсортированный пул сообщений
+        for msg in self.visible_messages:
+            self._append_chat_message_gui(
+                msg["platform"],
+                msg["author"],
+                msg["text"],
+                msg["msg_id"],
+                msg["author_id"],
+                msg["timestamp"]
+            )
+
+    def _append_chat_message_gui(self, platform, author, text, msg_id, author_id, timestamp):
         platform = platform.lower()
+
+        if author.startswith("@"):
+            author = author[1:]
 
         if msg_id:
             target_prefix = f"meta|{platform}|{msg_id}|"
@@ -151,7 +262,12 @@ class ChatPanelMixin:
                     return
 
         self.chat_text.config(state=tk.NORMAL)
-        ts = datetime.now().strftime("%H:%M:%S")
+
+        try:
+            dt = datetime.fromtimestamp(timestamp / 1000.0)
+        except Exception:
+            dt = datetime.now()
+        ts = dt.strftime("%H:%M:%S")
 
         start_index = self.chat_text.index("end-1c")
 
@@ -177,12 +293,6 @@ class ChatPanelMixin:
         meta_tag = f"meta|{platform}|{safe_msg_id}|{safe_author}|{safe_author_id}"
 
         self.chat_text.tag_add(meta_tag, start_index, end_index)
-
-        line_count = int(self.chat_text.index(tk.END).split(".")[0])
-        if line_count > 300:
-            self.chat_text.delete("1.0", f"{line_count - 300}.0")
-
-        self.chat_text.see(tk.END)
         self.chat_text.config(state=tk.DISABLED)
 
     def _on_chat_message_id_updated(self, data: dict):
@@ -192,16 +302,24 @@ class ChatPanelMixin:
         old_id = data.get("old_id")
         new_id = data.get("new_id")
 
-        self.root.after(0, self._update_message_id_gui, platform, old_id, new_id)
+        self.root.after(150, self._update_message_id_gui, platform, old_id, new_id)
 
         if getattr(self, "_pin_next_sent_message", False):
             self._pin_next_sent_message = False
             asyncio.create_task(self.app_core.chat_service.pin_message(platform, new_id))
-            self._append_chat_message_gui("sys", "Система", "Сообщение успешно отправлено и закреплено на Twitch!", "", "")
+            self._append_chat_message_gui("sys", "Система", "Сообщение успешно отправлено и закреплено!", "", "",
+                                          int(time.time() * 1000))
 
     def _update_message_id_gui(self, platform, old_id, new_id):
+        # Синхронизация буфера в памяти
+        for msg in self.visible_messages:
+            if msg["platform"] == platform and msg["msg_id"] == old_id:
+                msg["msg_id"] = new_id
+                break
+
         self.chat_text.config(state=tk.NORMAL)
-        old_prefix = f"meta|{platform}|{old_id}|"
+        safe_old_id = str(old_id).replace("|", "%7C")
+        old_prefix = f"meta|{platform}|{safe_old_id}|"
 
         for tag in self.chat_text.tag_names():
             if tag.startswith(old_prefix):
@@ -231,6 +349,11 @@ class ChatPanelMixin:
         self.root.after(0, self._ban_chat_user_gui, platform, username)
 
     def _ban_chat_user_gui(self, platform, username):
+        # Синхронизация буфера в памяти
+        for msg in self.visible_messages:
+            if msg["platform"] == platform and msg["author"].lower() == username.lower():
+                msg["text"] = "<сообщение удалено модератором>"
+
         self.chat_text.config(state=tk.NORMAL)
         ts = datetime.now().strftime("%H:%M:%S")
 
@@ -274,6 +397,9 @@ class ChatPanelMixin:
         author_name = author_name.replace("%7C", "|").strip()
         author_id = author_id.replace("%7C", "|").strip()
 
+        if author_name.startswith("@"):
+            author_name = author_name[1:]
+
         if platform == "sys" or not msg_id:
             return
 
@@ -289,11 +415,25 @@ class ChatPanelMixin:
         menu = tk.Menu(self.root, tearoff=0)
 
         is_self = author_name.lower() in ("вы", "broadcaster")
-        twitch_plugin = self.app_core.plugin_manager.get("twitch")
-        if twitch_plugin and twitch_plugin.enabled:
-            broadcaster_login = twitch_plugin.token_data.get("broadcaster_login", "")
-            if broadcaster_login and author_name.lower() == broadcaster_login.lower():
-                is_self = True
+        for p_name, plugin in self.app_core.plugin_manager.all().items():
+            if plugin.enabled:
+                t_data = getattr(plugin, "token_data", {}) or {}
+                b_name = t_data.get("broadcaster_login") or t_data.get("broadcaster_name")
+
+                if not b_name and hasattr(plugin, "config"):
+                    b_name = (
+                            plugin.config.get("channel") or
+                            plugin.config.get("channel_id") or
+                            plugin.config.get("owner_id")
+                    )
+
+                if b_name:
+                    clean_b_name = str(b_name).strip().lower()
+                    if clean_b_name.startswith("@"):
+                        clean_b_name = clean_b_name[1:]
+                    if author_name.lower() == clean_b_name:
+                        is_self = True
+                        break
 
         if is_self:
             menu.add_command(
@@ -313,7 +453,7 @@ class ChatPanelMixin:
 
         if text_content:
             menu.add_command(
-                label="📝 Копировать текст сообщения",
+                label="📋 Копировать текст сообщения",
                 command=lambda: self.root.clipboard_clear() or self.root.clipboard_append(text_content)
             )
 
@@ -345,29 +485,39 @@ class ChatPanelMixin:
     async def _moderate_pin(self, platform, msg_id):
         res = await self.app_core.chat_service.pin_message(platform, msg_id)
         if res:
-            self._append_chat_message_gui("sys", "Система", "Сообщение успешно закреплено на Twitch.", "", "")
+            self._append_chat_message_gui("sys", "Система", "Сообщение успешно закреплено на Twitch.", "", "",
+                                          int(time.time() * 1000))
         else:
-            self._append_chat_message_gui("sys", "Система", "Не удалось закрепить сообщение.", "", "")
+            self._append_chat_message_gui("sys", "Система", "Не удалось закрепить сообщение.", "", "",
+                                          int(time.time() * 1000))
 
     async def _moderate_delete(self, platform, msg_id):
         res = await self.app_core.chat_service.delete_message(platform, msg_id)
         if not res:
-            self._append_chat_message_gui("sys", "Система", f"Не удалось отправить запрос удаления на {platform}.", "", "")
+            self._append_chat_message_gui("sys", "Система", f"Не удалось отправить запрос удаления на {platform}.", "",
+                                          "", int(time.time() * 1000))
 
     async def _moderate_timeout(self, platform, username, author_id, duration):
-        res = await self.app_core.chat_service.ban_user(platform, author_id, reason="Нарушение правил", duration=duration)
+        res = await self.app_core.chat_service.ban_user(platform, author_id, reason="Нарушение правил",
+                                                        duration=duration)
         if res:
-            self._append_chat_message_gui("sys", "Система", f"Пользователю {username} выдан таймаут на {duration} сек.", "", "")
+            self._append_chat_message_gui("sys", "Система", f"Пользователю {username} выдан таймаут на {duration} сек.",
+                                          "", "", int(time.time() * 1000))
         else:
-            self._append_chat_message_gui("sys", "Система", f"Не удалось выдать таймаут на {platform}.", "", "")
+            self._append_chat_message_gui("sys", "Система", f"Не удалось выдать таймаут на {platform}.", "", "",
+                                          int(time.time() * 1000))
 
     async def _moderate_ban(self, platform, username, author_id):
-        if messagebox.askyesno("Подтверждение бана", f"Вы уверены, что хотите навсегда забанить {username} на {platform.upper()}?"):
+        if messagebox.askyesno("Подтверждение бана",
+                               f"Вы уверены, что хотите навсегда забанить {username} на {platform.upper()}?"):
             res = await self.app_core.chat_service.ban_user(platform, author_id, reason="Нарушение правил")
             if res:
-                self._append_chat_message_gui("sys", "Система", f"Пользователь {username} навсегда заблокирован на {platform}.", "", "")
+                self._append_chat_message_gui("sys", "Система",
+                                              f"Пользователь {username} навсегда заблокирован на {platform}.", "", "",
+                                              int(time.time() * 1000))
             else:
-                self._append_chat_message_gui("sys", "Система", f"Не удалось забанить пользователя на {platform}.", "", "")
+                self._append_chat_message_gui("sys", "Система", f"Не удалось забанить пользователя на {platform}.", "",
+                                              "", int(time.time() * 1000))
 
     def _on_chat_message_deleted(self, data: dict):
         if not hasattr(self, "chat_text") or not self.chat_text.winfo_exists():
@@ -378,10 +528,17 @@ class ChatPanelMixin:
         self.root.after(0, self._delete_chat_message_gui, platform, msg_id)
 
     def _delete_chat_message_gui(self, platform, msg_id):
+        # Синхронизация буфера в памяти
+        for msg in self.visible_messages:
+            if msg["platform"] == platform and msg["msg_id"] == msg_id:
+                msg["text"] = "<сообщение удалено модератором>"
+                break
+
         self.chat_text.config(state=tk.NORMAL)
         ts = datetime.now().strftime("%H:%M:%S")
 
-        target_prefix = f"meta|{platform}|{msg_id}|"
+        safe_msg_id = str(msg_id).replace("|", "%7C")
+        target_prefix = f"meta|{platform}|{safe_msg_id}|"
         for tag in self.chat_text.tag_names():
             if tag.startswith(target_prefix):
                 parts = tag.split("|")

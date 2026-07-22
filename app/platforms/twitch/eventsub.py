@@ -37,7 +37,22 @@ class TwitchEventSubClient:
                     continue
 
                 ssl_context = ssl.create_default_context()
-                url = "wss://eventsub.wss.twitch.tv/v1"
+                url = "wss://eventsub.wss.twitch.tv/ws"
+
+                # Сигнатура заголовков для CloudFront WAF
+                ws_headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                    "Origin": "https://twitch.tv"
+                }
+
+                # Автоопределение сигнатуры библиотеки (extra_headers vs additional_headers)
+                import inspect
+                sig = inspect.signature(websockets.connect)
+                connect_kwargs = {}
+                if "additional_headers" in sig.parameters:
+                    connect_kwargs["additional_headers"] = ws_headers
+                else:
+                    connect_kwargs["extra_headers"] = ws_headers
 
                 # Поддержка обхода блокировок/проксирования для сокета EventSub
                 proxy = http_client.get_proxy_settings()
@@ -50,10 +65,11 @@ class TwitchEventSubClient:
                         url,
                         sock=sock,
                         ssl=ssl_context,
-                        server_hostname="eventsub.wss.twitch.tv"
+                        server_hostname="eventsub.wss.twitch.tv",
+                        **connect_kwargs
                     )
                 else:
-                    ws = await websockets.connect(url, ssl=ssl_context)
+                    ws = await websockets.connect(url, ssl=ssl_context, **connect_kwargs)
 
                 async with ws:
                     backoff = 5

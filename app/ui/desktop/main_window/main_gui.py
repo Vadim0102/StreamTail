@@ -324,6 +324,9 @@ class StreamTailGUI(ChatPanelMixin):
 
     def _on_plugins_loaded(self, data: dict):
         self._build_platform_cards()
+        # Новая строчка: запуск реактивного ожидания истории по факту готовности плагинов
+        if hasattr(self, "init_history_loading_state"):
+            self.init_history_loading_state()
 
     def _on_status_checked(self, data: dict):
         platform = data.get("platform", "?")

@@ -1,5 +1,5 @@
 #define MyAppName "StreamTail"
-#define MyAppVersion "2.6.0"
+#define MyAppVersion "3.1.0"
 #define MyAppPublisher "Vadim0102"
 #define MyAppURL "https://github.com/Vadim0102/StreamTail"
 #define MyAppExeName "StreamTail.exe"

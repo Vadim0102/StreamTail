@@ -8,6 +8,7 @@ from app.utils.logger import logger
 class YouTubeApiClient:
     def __init__(self, plugin):
         self.plugin = plugin
+        self.live_chat_id = None  # Кэш идентификатора чата YouTube
 
     @property
     def headers(self):
@@ -20,7 +21,6 @@ class YouTubeApiClient:
             "needs_publish": False, "can_stop": False
         }
 
-        # Ошибки таймаута пробрасываются в планировщик, не прерывая стабильное отображение в GUI
         async with http_client.create_client(timeout=20.0) as client:
             url = f"https://youtube.googleapis.com/youtube/v3/liveBroadcasts?part=status,snippet&id={broadcast_id}"
             resp = await client.get(url, headers=self.headers)
@@ -31,6 +31,11 @@ class YouTubeApiClient:
                 item = data["items"][0]
                 lifecycle = item["status"]["lifeCycleStatus"]
                 privacy = item["status"].get("privacyStatus", "public")
+
+                # Извлечение и кэширование liveChatId для работы чата
+                live_chat_id = item.get("snippet", {}).get("liveChatId")
+                if live_chat_id:
+                    self.live_chat_id = live_chat_id
 
                 status["is_live"] = (lifecycle == "live")
                 status["title"] = item["snippet"]["title"]
@@ -297,3 +302,183 @@ class YouTubeApiClient:
                 return f"YouTube: Ошибка загрузки обложки: {resp.text}"
         except Exception as e:
             return f"YouTube: Исключение при загрузке обложки: {e!r}"
+
+    # ── Методы для отправки и модерации сообщений ──
+    
+    async def fetch_chat_history(self, broadcast_id: str) -> list:
+        """Получает последние 30 сообщений чата через официальный API один раз при запуске."""
+        if not self.live_chat_id:
+            try:
+                async with http_client.create_client(timeout=10.0) as client:
+                    url = f"https://youtube.googleapis.com/youtube/v3/liveBroadcasts?part=snippet&id={broadcast_id}"
+                    resp = await client.get(url, headers=self.headers)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        if data.get("items"):
+                            self.live_chat_id = data["items"][0].get("snippet", {}).get("liveChatId")
+            except Exception as e:
+                logger.error(f"YouTube Client: не удалось получить liveChatId для истории: {e!r}")
+
+        if not self.live_chat_id:
+            return []
+
+        try:
+            async with http_client.create_client(timeout=10.0) as client:
+                url = "https://youtube.googleapis.com/youtube/v3/liveChat/messages"
+                resp = await client.get(url, headers=self.headers, params={
+                    "liveChatId": self.live_chat_id,
+                    "part": "id,snippet,authorDetails",
+                    "maxResults": 30
+                })
+                if resp.status_code == 200:
+                    return resp.json().get("items", [])
+        except Exception as e:
+            logger.error(f"YouTube Client: ошибка запроса истории чата: {e!r}")
+        return []
+
+    async def send_chat_message(self, broadcast_id: str, text: str, retry_on_auth: bool = True) -> str | None:
+        """Отправляет текстовое сообщение в активный чат трансляции и возвращает его валидный ID."""
+        if not self.live_chat_id:
+            try:
+                async with http_client.create_client(timeout=10.0) as client:
+                    url = f"https://youtube.googleapis.com/youtube/v3/liveBroadcasts?part=snippet&id={broadcast_id}"
+                    resp = await client.get(url, headers=self.headers)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        if data.get("items"):
+                            self.live_chat_id = data["items"][0].get("snippet", {}).get("liveChatId")
+            except Exception as e:
+                logger.error(f"YouTube Client: не удалось автоматически получить liveChatId: {e!r}")
+
+        if not self.live_chat_id:
+            logger.warning("YouTube Client: liveChatId не определен, отправка сообщения невозможна.")
+            return None
+
+        try:
+            async with http_client.create_client() as client:
+                url = "https://youtube.googleapis.com/youtube/v3/liveChat/messages?part=snippet"
+                payload = {
+                    "snippet": {
+                        "type": "textMessageEvent",
+                        "liveChatId": self.live_chat_id,
+                        "textMessageDetails": {
+                            "messageText": text
+                        }
+                    }
+                }
+                resp = await client.post(url, headers=self.headers, json=payload)
+
+                # ИСПРАВЛЕНО: Автоматический перезапрос при протухании сессии токена (HTTP 401)
+                if resp.status_code == 401 and retry_on_auth:
+                    logger.info(
+                        "YouTube Client: Токен отклонен (401). Запуск принудительного обновления и повторной отправки...")
+                    if await self.plugin._force_token_refresh():
+                        return await self.send_chat_message(broadcast_id, text, retry_on_auth=False)
+
+                if resp.status_code in (200, 201):
+                    return resp.json().get("id")
+                else:
+                    logger.error(f"YouTube Client: ошибка отправки сообщения (HTTP {resp.status_code}): {resp.text}")
+                    return None
+        except Exception as e:
+            # ИСПРАВЛЕНО: Подробное логирование исключений с трассировкой стека
+            logger.exception(
+                f"YouTube Client: критическая ошибка при отправке сообщения в liveChatId {self.live_chat_id}: {e!r}")
+        return None
+
+    async def resolve_scraped_id(self, scraped_id: str, cached_data: dict) -> str | None:
+        """Сопоставляет неофициальный ID скрапера с валидным API ID на лету."""
+        if not self.live_chat_id:
+            logger.warning("YouTube Client: liveChatId не определен, сопоставление невозможно.")
+            return None
+
+        target_author = cached_data.get("author_id")
+        target_text = cached_data.get("text", "").strip().lower()
+
+        try:
+            async with http_client.create_client(timeout=10.0) as client:
+                url = "https://youtube.googleapis.com/youtube/v3/liveChat/messages"
+                resp = await client.get(url, headers=self.headers, params={
+                    "liveChatId": self.live_chat_id,
+                    "part": "id,snippet",
+                    "maxResults": 75
+                })
+                if resp.status_code == 200:
+                    items = resp.json().get("items", [])
+                    for item in items:
+                        snippet = item.get("snippet", {})
+                        author_id = snippet.get("authorChannelId")
+
+                        # Чтение текста сообщения из официального API
+                        msg_text = ""
+                        if "textMessageDetails" in snippet:
+                            msg_text = snippet["textMessageDetails"].get("messageText", "")
+                        else:
+                            msg_text = snippet.get("displayMessage", "")
+
+                        msg_text_clean = msg_text.strip().lower()
+
+                        # Сравниваем по ID автора и схожести текста
+                        if author_id == target_author and (
+                                msg_text_clean == target_text or target_text in msg_text_clean or msg_text_clean in target_text):
+                            real_id = item.get("id")
+                            if real_id:
+                                logger.info(
+                                    f"YouTube Client: Успешно сопоставили scraped ID {scraped_id} с реальным API ID {real_id}")
+                                return real_id
+                else:
+                    logger.error(f"YouTube Client: ошибка сопоставления ID (HTTP {resp.status_code}): {resp.text}")
+        except Exception as e:
+            logger.error(f"YouTube Client: ошибка во время сопоставления ID: {e!r}")
+        return None
+
+    async def delete_message(self, message_id: str, retry_on_auth: bool = True) -> bool:
+        """Удаляет сообщение из чата YouTube по его ID."""
+        try:
+            async with http_client.create_client() as client:
+                url = f"https://youtube.googleapis.com/youtube/v3/liveChat/messages?id={message_id}"
+                resp = await client.delete(url, headers=self.headers)
+
+                # ИСПРАВЛЕНО: Автоматический перезапрос при протухании сессии токена (HTTP 401)
+                if resp.status_code == 401 and retry_on_auth:
+                    logger.info(
+                        "YouTube Client: Токен отклонен (401) при удалении. Запуск обновления и повтор запроса...")
+                    if await self.plugin._force_token_refresh():
+                        return await self.delete_message(message_id, retry_on_auth=False)
+
+                if resp.status_code != 204:
+                    logger.error(
+                        f"YouTube Client: ошибка удаления сообщения {message_id} (HTTP {resp.status_code}): {resp.text}")
+                    return False
+                return True
+        except Exception as e:
+            logger.exception(f"YouTube Client: критическая ошибка удаления сообщения {message_id}: {e!r}")
+            return False
+
+    async def ban_user(self, user_id: str, reason: str = "", duration: int = None) -> bool:
+        """Накладывает блокировку или таймаут на пользователя по ID его канала."""
+        if not self.live_chat_id:
+            logger.warning("YouTube Client: liveChatId не определен, блокировка невозможна.")
+            return False
+
+        ban_type = "temporary" if duration else "permanent"
+        payload = {
+            "snippet": {
+                "liveChatId": self.live_chat_id,
+                "type": ban_type,
+                "bannedUserDetails": {
+                    "channelId": str(user_id)
+                }
+            }
+        }
+        if duration:
+            payload["snippet"]["banDurationSeconds"] = int(duration)
+
+        try:
+            async with http_client.create_client() as client:
+                url = "https://www.googleapis.com/youtube/v3/liveChat/bans?part=snippet"
+                resp = await client.post(url, headers=self.headers, json=payload)
+                return resp.status_code in (200, 201)
+        except Exception as e:
+            logger.error(f"YouTube Client: ошибка блокировки пользователя {user_id}: {e!r}")
+        return False

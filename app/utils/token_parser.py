@@ -1,35 +1,57 @@
 import json
+import re
 import urllib.parse
 from app.utils.logger import logger
 
 
 def is_cookie_format(text: str) -> bool:
-    """Проверяет, является ли строка набором кук (содержит ';' или '=' или 'Name raw' или '\t')."""
+    """Проверяет, является ли строка набором кук."""
     val = text.strip()
-    return ";" in val or "=" in val or "\t" in val or "Name raw" in val or "Host raw" in val
+    return ";" in val or "=" in val or "\t" in val or "Name raw" in val or "Host raw" in val or ".vkvideo.ru" in val or "\n" in val
+
+
+def parse_netscape_cookie_file(text: str) -> str:
+    """
+    Преобразует многострочный Netscape cookie файл в единую плоскую HTTP-строку кук [1].
+    Игнорирует комментарии и корректно разбирает табы и пробелы.
+    """
+    cookie_pairs = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        # Сначала пробуем разделить по табуляции, затем по множественным пробелам
+        parts = line.split("\t")
+        if len(parts) < 6:
+            parts = re.split(r'\s+', line)
+
+        if len(parts) >= 6:
+            name = parts[5].strip()
+            value = parts[6].strip() if len(parts) > 6 else ""
+            if name:
+                cookie_pairs.append(f"{name}={value}")
+
+    return "; ".join(cookie_pairs)
 
 
 def parse_any_cookie_format(raw_input: str) -> str:
     """
-    Универсальный парсер кук. Автоматически распознает и конвертирует в плоскую HTTP-строку Cookie:
-    1. JSON-формат (Cookie Quick Manager / EditThisCookie)
-    2. Netscape-формат (Get cookies.txt LOCALLY / Cookies.txt)
-    3. Обычную HTTP-строку Cookie.
+    Универсальный парсер кук. Гарантированно исключает возвращение многострочных строк [1].
     """
     raw_input = raw_input.strip()
     if not raw_input:
         return ""
 
-    is_json = False
-    if raw_input.startswith("[") or raw_input.startswith("{"):
-        is_json = True
-    elif "Name raw" in raw_input or "Content raw" in raw_input or '"name"' in raw_input:
-        is_json = True
+    # Если есть переносы строк, это однозначно файл кук (Netscape/Header text) [1]
+    if "\n" in raw_input:
+        parsed_netscape = parse_netscape_cookie_file(raw_input)
+        if parsed_netscape:
+            return parsed_netscape
 
-    # --- 1. JSON формат ---
-    if is_json:
+    # Если это JSON формат (EditThisCookie / Cookie Quick Manager)
+    if raw_input.startswith("[") or raw_input.startswith("{"):
         try:
-            # Попытка автоматически закрыть скобки при обрезке файла
             json_to_parse = raw_input
             if json_to_parse.startswith("[") and not json_to_parse.endswith("]"):
                 json_to_parse = json_to_parse.rstrip().rstrip(",")
@@ -49,67 +71,30 @@ def parse_any_cookie_format(raw_input: str) -> str:
             if cookie_pairs:
                 return "; ".join(cookie_pairs)
         except Exception as e:
-            logger.debug(f"TokenParser: стандартный JSON-импорт не удался ({e!r}). Запуск регулярных выражений...")
+            logger.debug(f"TokenParser: ошибка парсинга JSON кук: {e!r}")
 
-        # Резервное извлечение регулярными выражениями для поврежденных JSON-массивов
-        try:
-            import re
-            blocks = re.findall(r'\{([^}]+)\}', raw_input)
-            cookie_pairs = []
-            for block in blocks:
-                name_match = re.search(r'"(?:Name raw|name|Name)"\s*:\s*"([^"]*)"', block)
-                value_match = re.search(r'"(?:Content raw|value|Content|value raw)"\s*:\s*"([^"]*)"', block)
-                if name_match and value_match:
-                    name = name_match.group(1).strip()
-                    value = value_match.group(1).strip()
-                    if name:
-                        cookie_pairs.append(f"{name}={value}")
-            if cookie_pairs:
-                return "; ".join(cookie_pairs)
-        except Exception as re_err:
-            logger.debug(f"TokenParser: ошибка извлечения регулярным выражением JSON: {re_err!r}")
-
-    # --- 2. Netscape формат ---
-    elif "\t" in raw_input:
-        try:
-            cookie_pairs = []
-            for line in raw_input.splitlines():
-                line = line.strip()
-                # Игнорируем пустые строки и комментарии
-                if not line or line.startswith("#"):
-                    continue
-                parts = line.split("\t")
-                if len(parts) >= 6:
-                    name = parts[5].strip()
-                    value = parts[6].strip() if len(parts) > 6 else ""
-                    if name:
-                        cookie_pairs.append(f"{name}={value}")
-            if cookie_pairs:
-                return "; ".join(cookie_pairs)
-        except Exception as e:
-            logger.debug(f"TokenParser: ошибка обработки формата Netscape: {e!r}")
-
-    # --- 3. Возврат плоской строки по умолчанию ---
-    return raw_input
+    # Удаляем случайные оставшиеся символы переноса строк для безопасности HTTP-заголовков [1]
+    return raw_input.replace("\r", "").replace("\n", " ")
 
 
 def extract_cookie(cookie_str: str, name: str) -> str:
-    """Извлекает значение конкретной куки из строки (регистронезависимо) с декодированием."""
+    """Извлекает значение конкретной куки из строки с декодированием и очисткой кавычек [1]."""
     try:
         for item in cookie_str.split(";"):
             item = item.strip()
             if "=" in item:
                 k, v = item.split("=", 1)
                 if k.strip().lower() == name.lower():
-                    return urllib.parse.unquote(v.strip())
+                    val = urllib.parse.unquote(v.strip())
+                    return val.strip('"').strip("'")
     except Exception:
         pass
     return ""
 
 
 def parse_local_storage(json_str: str, key: str) -> str:
-    """Безопасно парсит JSON-строку LocalStorage и возвращает значение нужного ключа (регистронезависимо)."""
-    json_str = json_str.strip()
+    """Безопасно парсит JSON-строку LocalStorage/куки и возвращает значение ключа [1]."""
+    json_str = json_str.strip().strip('"').strip("'")
     if not json_str.startswith("{") or not json_str.endswith("}"):
         return ""
     try:

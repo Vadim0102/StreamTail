@@ -3,13 +3,13 @@ import json
 import threading
 from app.utils import crypto
 from app.utils.paths import get_app_data_dir
+from app.utils.logger import logger
 
-# База данных хранится в AppData
 DB_PATH = get_app_data_dir() / "streamtail.db"
 _settings_cache = {}
 _tokens_cache = {}
 _db_initialized = False
-_db_lock = threading.Lock()  # Блокировка для гарантированной потокобезопасности СУБД
+_db_lock = threading.Lock()
 
 
 def init_db():
@@ -20,13 +20,9 @@ def init_db():
         if _db_initialized:
             return
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        # Отключаем check_same_thread для разделения дескрипторов между asyncio-потоками
         conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         cursor = conn.cursor()
-
-        # WAL-режим для многопоточного параллельного доступа
         cursor.execute("PRAGMA journal_mode=WAL")
-
         cursor.execute("""
                        CREATE TABLE IF NOT EXISTS settings
                        (
@@ -44,6 +40,9 @@ def init_db():
         conn.commit()
         conn.close()
 
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        cursor = conn.cursor()
+
         # Чтение кэша настроек
         conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         cursor = conn.cursor()
@@ -60,17 +59,32 @@ def init_db():
                 try:
                     _settings_cache[key] = json.loads(raw_val)
                 except Exception:
-                    _settings_cache[key] = raw_val
+                    logger.warning(f"DB: Не удалось расшифровать параметр '{key}'. Запись пропущена.")
 
         # Чтение кэша авторизационных токенов
         cursor.execute("SELECT platform, token_data FROM tokens")
+        corrupted_tokens = []
         for r in cursor.fetchall():
-            decrypted = crypto.decrypt_text(r[1])
+            platform, raw_val = r[0], r[1]
+            decrypted = crypto.decrypt_text(raw_val)
             if decrypted:
                 try:
-                    _tokens_cache[r[0]] = json.loads(decrypted)
+                    _tokens_cache[platform] = json.loads(decrypted)
                 except Exception:
                     pass
+            else:
+                try:
+                    _tokens_cache[platform] = json.loads(raw_val)
+                except Exception:
+                    # Помечаем устаревшие зашифрованные OAuth-токены для удаления
+                    corrupted_tokens.append(platform)
+
+        # Очищаем не подлежащие дешифрации записи, чтобы не спамить ворнингами
+        if corrupted_tokens:
+            for plat in corrupted_tokens:
+                cursor.execute("DELETE FROM tokens WHERE platform = ?", (plat,))
+            conn.commit()
+
         conn.close()
         _db_initialized = True
 
