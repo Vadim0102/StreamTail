@@ -1,6 +1,6 @@
 # RUTUBE Studio API Map
 
-Интеграция со Студией RUTUBE (`studio.rutube.ru`) использует куки авторизованного пользователя и извлечение необходимых CSRF-токенов (`x-csrftoken`) для обхода авторизационных защит и фильтров Cloudflare.
+Интеграция со Студией RUTUBE (`studio.rutube.ru`) использует куки авторизованного пользователя и извлечение необходимых CSRF-токенов (`x-csrftoken`) для прохождения авторизационной сигнатуры и отправки сообщений.
 
 ## 1. Автоматический парсинг кук и CSRF
 Плагин принимает куки пользователя в любом формате (JSON, Netscape, HTTP Raw) из поля «Токен» и извлекает:
@@ -9,36 +9,28 @@
 
 ## 2. Чтение статуса канала (Публичный API)
 Для быстрого и бесперебойного получения онлайна без авторизации плагин опрашивает публичный API видеохостинга.
-* **Запрос**: `GET https://rutube.ru/api/video/person/{channel_id}/` (или `GET https://rutube.ru/api/play/v2/thumbnail/{video_id}/`)
+* **Запрос**: `GET https://rutube.ru/api/video/person/{channel_id}/`
 * **Ответ**: Данные о последнем видео канала или статус активной трансляции.
 
 ## 3. Чтение и обновление данных трансляции (Studio API)
 Используются приватные эндпоинты Студии RUTUBE:
 * **Запрос**: `GET https://studio.rutube.ru/api/v2/stream/{broadcast_id}/`
-* **Заголовки**:
-  * `Cookie: <parsed_cookies>`
-  * `X-CSRFToken: <extracted_csrf_token>`
-  * `Referer: https://studio.rutube.ru/`
-* **Ответ (Данные стрима)**:
-  ```json
-  {
-    "id": "f290551824869de96ec29760e731385d",
-    "title": "Текущий заголовок",
-    "description": "Описание стрима",
-    "category": {
-      "id": 15,
-      "name": "Игры"
-    },
-    "is_live": true
-  }
-  ```
+* **Обновление заголовка и игры (POST)**:
+  * **Запрос**: `POST https://studio.rutube.ru/api/v2/video/stream/{broadcast_id}/`
 
-* **Обновление заголовка и игры (PUT/PATCH)**:
-  * **Запрос**: `PUT https://studio.rutube.ru/api/v2/stream/{broadcast_id}/`
+## 4. Чат трансляции (Poll & Send API)
+Взаимодействие с чатом происходит через открытый и защищенный REST API:
+* **Получение истории / Опрос новых сообщений**:
+  * **Запрос**: `GET https://rutube.ru/api/chat/{broadcast_id}?time={timestamp}&direction=present&format=json&only_active=true`
+  * **Ответ**: Возвращает `timestamp` для следующей итерации опроса и массив `results` с сообщениями.
+
+* **Отправка сообщения**:
+  * **Запрос**: `POST https://rutube.ru/api/chat/{broadcast_id}/`
+  * **Заголовки**: `X-CSRFToken`, `Cookie`, `Origin: https://rutube.ru`, `Content-Type: application/json`
   * **Тело запроса (JSON)**:
     ```json
     {
-      "title": "Новое название трансляции",
-      "category": 15
+      "text": "Текст сообщения",
+      "parent_id": "1784802120766181260"
     }
     ```

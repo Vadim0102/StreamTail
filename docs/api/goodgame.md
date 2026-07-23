@@ -63,3 +63,38 @@
   }
   ```
 > **Важно**: Платформа требует одновременной отправки названия и игры, поэтому плагин использует стратегию Read-Modify-Write (RMW), предварительно считывая текущие параметры перед записью.
+
+## 5. Чат трансляции (WebSocket Chat2 Protocol)
+* **Адрес сокета**: `wss://chat-1.goodgame.ru/chat2/`
+* **Авторизация**:
+  ```json
+  {
+    "type": "auth",
+    "data": {
+      "user_id": 123456,
+      "token": "<access_token>"
+    }
+  }
+  ```
+* **Вход в комнату**:
+  ```json
+  {
+    "type": "join",
+    "data": {
+      "channel_id": "221841",
+      "hidden": false
+    }
+  }
+  ```
+* **Отправка сообщения**:
+  ```json
+  {
+    "type": "send_message",
+    "data": {
+      "channel_id": "221841",
+      "text": "Текст сообщения",
+      "hideIcon": false,
+      "mobile": false
+    }
+  }
+  ```

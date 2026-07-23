@@ -210,10 +210,16 @@ class StreamTailGUI(ChatPanelMixin):
                 self.tab_settings.canvas.configure(
                     background=colors["bg"]
                 )
-            if hasattr(self.tab_settings, "instructions") and self.tab_settings.instructions.winfo_exists():
-                self.tab_settings.instructions.text_widget.configure(
+            if getattr(self.tab_settings, "instructions_win", None) and self.tab_settings.instructions_win.winfo_exists():
+                self.tab_settings.instructions_win.colors = colors
+                self.tab_settings.instructions_win.configure(bg=colors["bg"])
+                self.tab_settings.instructions_win.text_widget.configure(
                     background=colors["field_bg"],
-                    foreground=colors["fg"]
+                    foreground=colors["fg"],
+                    selectbackground=colors["select_bg"]
+                )
+                self.tab_settings.instructions_win.text_widget.tag_configure(
+                    "hyperlink", foreground=colors["text_blue"]
                 )
 
         if hasattr(self, "chat_text") and self.chat_text.winfo_exists():

@@ -1,1 +1,3 @@
-"""Пакет интеграции с платформой."""
+from app.platforms.rutube.plugin import RutubePlugin
+
+__all__ = ["RutubePlugin"]

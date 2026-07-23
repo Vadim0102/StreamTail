@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import asyncio
 import datetime
+import copy
 from app.utils.logger import logger
 from app.ui.desktop.main_window.theme import BRAND_COLORS
 
@@ -320,9 +321,10 @@ class PlatformCard(tk.LabelFrame):
                         tok["broadcast_id"] = selected["id"]
                         set_token("youtube", tok)
                     elif self.platform.lower() == "rutube":
-                        platform_cfg = config["platforms"].setdefault("rutube", {})
+                        new_config = copy.deepcopy(self.app_core.config)
+                        platform_cfg = new_config.setdefault("platforms", {}).setdefault("rutube", {})
                         platform_cfg["broadcast_id"] = selected["id"]
-                        self.app_core.update_app_config(config)
+                        self.app_core.update_app_config(new_config)
 
                     messagebox.showinfo("Успех", f"Успешно привязана трансляция:\n{selected['title']}", parent=dialog)
                     dialog.destroy()
@@ -471,16 +473,16 @@ class PlatformCard(tk.LabelFrame):
                     res = await plugin.create_stream(title=t, game=g, description=d)
 
                 if res.get("success"):
-                    config = self.app_core.config
                     if self.platform.lower() == "youtube":
                         from app.auth.token_store import get_token, set_token
                         tok = get_token("youtube") or {}
                         tok["broadcast_id"] = res["broadcast_id"]
                         set_token("youtube", tok)
                     elif self.platform.lower() == "rutube":
-                        platform_cfg = config["platforms"].setdefault("rutube", {})
+                        new_config = copy.deepcopy(self.app_core.config)
+                        platform_cfg = new_config.setdefault("platforms", {}).setdefault("rutube", {})
                         platform_cfg["broadcast_id"] = res["broadcast_id"]
-                        self.app_core.update_app_config(config)
+                        self.app_core.update_app_config(new_config)
 
                     tp = thumb_path_var.get().strip()
                     if tp:

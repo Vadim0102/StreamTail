@@ -11,10 +11,14 @@ from app.utils import http_client
 class RutubePlugin(BasePlugin):
     def __init__(self, config=None):
         super().__init__(config)
+        self._last_real_id = None
+        self._cached_user_login = None
+
+        from app.platforms.rutube.chat import RutubeChatClient
+        self.chat_client = RutubeChatClient(self)
 
     @property
     def channel_id(self) -> str:
-        """Динамически возвращает ID канала (исправляет баг кэширования при сохранении настроек)."""
         raw = self.config.get("channel_id", "").strip()
         if not raw:
             return ""
@@ -24,12 +28,10 @@ class RutubePlugin(BasePlugin):
 
     @property
     def token(self) -> str:
-        """Динамически возвращает токен из измененного интерфейса настроек."""
         return self.config.get("token", "").strip()
 
     @property
     def broadcast_id(self) -> str:
-        """Возвращает зафиксированный ID стрима из настроек (если задан вручную)."""
         return self.config.get("broadcast_id", "").strip()
 
     @property
@@ -45,7 +47,6 @@ class RutubePlugin(BasePlugin):
             cleaned_cookies = token_parser.parse_any_cookie_format(self.token)
             if token_parser.is_cookie_format(cleaned_cookies):
                 hdrs["Cookie"] = cleaned_cookies
-                # Извлекаем защитный csrftoken из кук (регистронезависимо)
                 csrf = token_parser.extract_cookie(cleaned_cookies, "csrftoken") or \
                        token_parser.extract_cookie(cleaned_cookies, "x-csrftoken")
                 if csrf:
@@ -55,7 +56,6 @@ class RutubePlugin(BasePlugin):
         return hdrs
 
     async def _fetch_channel_html(self) -> str:
-        """Скачивает публичную страницу канала RUTUBE без прохождения авторизации."""
         owner = self.channel_id
         if not owner:
             return ""
@@ -78,17 +78,14 @@ class RutubePlugin(BasePlugin):
         return ""
 
     def _parse_streams_from_html(self, html: str) -> list:
-        """Извлекает и декодирует все данные о трансляциях из Redux-состояния страницы."""
         if not html:
             return []
 
-        # Поиск блока ReduxState (улучшенное регулярное выражение)
         match = re.search(r"window\.reduxState\s*=\s*(\{.+?\})\s*;?\s*</script>", html, re.DOTALL)
         if not match:
             return []
 
         json_str = match.group(1)
-        # Исправляем JS-специфичные hex-эскейпы (\x3d, \x26), ломающие json.loads
         json_str_cleaned = re.sub(r'\\x([0-9a-fA-F]{2})', lambda m: chr(int(m.group(1), 16)), json_str)
 
         try:
@@ -130,15 +127,12 @@ class RutubePlugin(BasePlugin):
         if not self.channel_id:
             return status
 
-        # Если у нас есть API токен/куки и задан broadcast_id, запрашиваем расширенный статус из Студии
         if self.token and self.broadcast_id:
             try:
                 async with http_client.create_client(timeout=10.0) as client:
-                    # 1. Запрос параметров трансляции
                     stream_url = f"https://studio.rutube.ru/api/v2/video/stream/{self.broadcast_id}/"
                     resp = await client.get(stream_url, headers=self.headers)
 
-                    # 2. Запрос счетчика лайков/дизлайков
                     vote_url = f"https://studio.rutube.ru/api/numerator/video/{self.broadcast_id}/vote"
                     vote_resp = await client.get(vote_url, headers=self.headers)
 
@@ -152,7 +146,6 @@ class RutubePlugin(BasePlugin):
                     if resp.status_code == 200:
                         stream_data = resp.json()
 
-                        # Состояния из API: wait - На подготовке, actual - В эфире, done - Завершен
                         stream_state = stream_data.get("stream_status", "wait")
                         access_state = stream_data.get("access_status", "private")
 
@@ -160,7 +153,6 @@ class RutubePlugin(BasePlugin):
                         needs_publish = (access_state == "private" and stream_state == "wait")
                         can_stop = (stream_state == "actual")
 
-                        # Маппинг кастомных статусов
                         if stream_state == "wait":
                             custom_status = "🟡 НА ПОДГОТОВКЕ"
                         elif stream_state == "actual":
@@ -170,14 +162,12 @@ class RutubePlugin(BasePlugin):
                         else:
                             custom_status = "🔴 ОФФЛАЙН"
 
-                        # Оптимизация получения категории (сначала берем из структуры ответа)
                         category_val = stream_data.get("category")
                         category_name = "Разное"
 
                         if isinstance(category_val, dict):
                             category_name = category_val.get("name", "Разное")
                         elif category_val:
-                            # Метод-дублер, если пришел только числовой ID
                             cat_url = "https://rutube.ru/api/video/category/"
                             cat_resp = await client.get(cat_url)
                             if cat_resp.status_code == 200:
@@ -188,7 +178,6 @@ class RutubePlugin(BasePlugin):
                                             category_name = cat.get("name", "Разное")
                                             break
 
-                        # Пытаемся получить число зрителей, если стрим запущен в эфир
                         viewers = 0
                         if is_live:
                             try:
@@ -218,7 +207,6 @@ class RutubePlugin(BasePlugin):
             except Exception as e:
                 logger.debug(f"RUTUBE Studio API: ошибка расширенного опроса: {e!r}")
 
-        # Публичный опрос через HTML-парсер (если нет авторизации/токена)
         try:
             html = await self._fetch_channel_html()
             broadcasts = self._parse_streams_from_html(html)
@@ -234,7 +222,6 @@ class RutubePlugin(BasePlugin):
                             break
 
                 if not target_stream:
-                    # Приоритизируем живые (публичные) стримы
                     for b in broadcasts:
                         if b["is_live"]:
                             target_stream = b
@@ -249,7 +236,6 @@ class RutubePlugin(BasePlugin):
                 })
                 return status
 
-            # Резервный опрос через старый JSON API
             async with http_client.create_client(timeout=10.0) as client:
                 url = f"https://rutube.ru/api/video/person/{self.channel_id}/"
                 resp = await client.get(url, headers=self.headers)
@@ -274,8 +260,6 @@ class RutubePlugin(BasePlugin):
     # ── Получение списка трансляций ──────────────────────────────────────────
 
     async def get_broadcasts(self) -> list:
-        """Возвращает список трансляций, совмещая данные Студии и публичной страницы."""
-        # Улучшение: если есть токен, сначала запрашиваем список напрямую в Студии (видны даже приватные/wait стримы)
         if self.token:
             try:
                 async with http_client.create_client(timeout=10.0) as client:
@@ -295,7 +279,6 @@ class RutubePlugin(BasePlugin):
             except Exception as ex:
                 logger.debug(f"RUTUBE Студия: Сбой получения приватного списка трансляций: {ex!r}")
 
-        # Fallback на парсинг публичной страницы
         try:
             html = await self._fetch_channel_html()
             broadcasts = self._parse_streams_from_html(html)
@@ -312,12 +295,11 @@ class RutubePlugin(BasePlugin):
             logger.error(f"RUTUBE: Ошибка get_broadcasts: {e!r}")
         return []
 
-    # ── Вспомогательный метод записи (Паттерн Read-Modify-Write) ──
+    # ── Вспомогательный метод записи ──
 
     async def _update_stream_info(self, broadcast_id: str, **kwargs) -> str:
         try:
             async with http_client.create_client(timeout=10.0) as client:
-                # 1. Читаем текущее состояние стрима
                 get_url = f"https://studio.rutube.ru/api/v2/video/stream/{broadcast_id}/"
                 get_resp = await client.get(get_url, headers=self.headers)
                 if get_resp.status_code != 200:
@@ -325,18 +307,15 @@ class RutubePlugin(BasePlugin):
 
                 stream_data = get_resp.json()
 
-                # 2. Перезаписываем изменившиеся поля
                 for k, v in kwargs.items():
                     stream_data[k] = v
 
-                # Очищаем поле категории от словаря, переводя в ID во избежание ошибки HTTP 400
                 category_val = stream_data.get("category")
                 if isinstance(category_val, dict):
                     category_id = category_val.get("id")
                 else:
                     category_id = category_val
 
-                # Формируем полный пакет настроек для сохранения
                 payload = {
                     "title": stream_data.get("title", ""),
                     "category": category_id,
@@ -349,7 +328,6 @@ class RutubePlugin(BasePlugin):
                     "is_chat_saved": stream_data.get("is_chat_saved", True)
                 }
 
-                # 3. Отправляем полный пакет на сервер методом POST
                 post_url = f"https://studio.rutube.ru/api/v2/video/stream/{broadcast_id}/"
                 post_resp = await client.post(post_url, headers=self.headers, json=payload)
 
@@ -371,7 +349,6 @@ class RutubePlugin(BasePlugin):
             if not broadcasts:
                 return "RUTUBE: Активные трансляции не найдены (проверьте ID канала в настройках)"
 
-            # Приоритизируем live-стрим при автовыборе
             target = None
             for b in broadcasts:
                 if b.get("status") == "live" or b.get("status") == "actual":
@@ -391,7 +368,6 @@ class RutubePlugin(BasePlugin):
         if not self.token:
             return "RUTUBE: Смена категории недоступна (требуется API Token или Cookies)"
 
-        # 1. Поиск ID категории на RUTUBE
         category_id = None
         try:
             async with http_client.create_client(timeout=10.0) as client:
@@ -410,14 +386,12 @@ class RutubePlugin(BasePlugin):
         if not category_id:
             return f"RUTUBE: Категория '{game}' не найдена в каталоге"
 
-        # 2. Нахождение ID трансляции
         broadcast_id = self.broadcast_id
         if not broadcast_id:
             broadcasts = await self.get_broadcasts()
             if not broadcasts:
                 return "RUTUBE: Трансляции не найдены"
 
-            # Приоритизируем live-стрим при автовыборе
             target = None
             for b in broadcasts:
                 if b.get("status") == "live" or b.get("status") == "actual":
@@ -431,20 +405,15 @@ class RutubePlugin(BasePlugin):
         if not broadcast_id:
             return "RUTUBE: Не удалось определить ID трансляции"
 
-        # 3. Обновление категории
         return await self._update_stream_info(broadcast_id, category=category_id)
 
-    # ── Создание стрима ─────────────────────────────────────────────────────
+    # ── Создание, публикация и завершение ──
 
     async def create_stream(self, title: str, game: str = "Видеоигры", description: str = "") -> dict:
-        """
-        Создает новую трансляцию на RUTUBE Studio.
-        """
         if not self.token:
             return {"success": False, "error": "RUTUBE: Требуется API токен или Cookies"}
 
-        # 1. Поиск ID категории
-        category_id = 22  # Видеоигры по умолчанию
+        category_id = 22
         try:
             async with http_client.create_client(timeout=10.0) as client:
                 cat_url = "https://rutube.ru/api/video/category/"
@@ -459,7 +428,6 @@ class RutubePlugin(BasePlugin):
         except Exception as e:
             logger.debug(f"RUTUBE: Ошибка поиска категории стрима: {e!r}")
 
-        # 2. Формируем заголовки создания (включая Idempotency-Key и CSRF)
         headers = dict(self.headers)
         headers["Idempotency-Key"] = f'"{random.randint(10 ** 19, 10 ** 20 - 1)}"'
         headers["Content-Type"] = "application/json"
@@ -486,7 +454,6 @@ class RutubePlugin(BasePlugin):
                 if not broadcast_id:
                     return {"success": False, "error": "RUTUBE API не вернул ID созданной трансляции"}
 
-                # 3. Получение / активация постоянного Stream Key (permkey)
                 permkey_url = f"https://studio.rutube.ru/api/v1/video/stream/{broadcast_id}/permkey/"
                 headers_pk = dict(self.headers)
                 headers_pk["Idempotency-Key"] = f'"{random.randint(10 ** 19, 10 ** 20 - 1)}"'
@@ -506,13 +473,7 @@ class RutubePlugin(BasePlugin):
         except Exception as e:
             return {"success": False, "error": f"Исключение при обращении к API RUTUBE: {e!r}"}
 
-    # ── Публикация стрима ──────────────────────────────────────────────────
-
     async def publish_stream(self) -> str:
-        """
-        Переводит трансляцию из приватного состояния подготовки ("wait")
-        в публичный эфир ("actual", access_status="public").
-        """
         if not self.token:
             return "RUTUBE: Смена статуса недоступна (требуется API Token или Cookies)"
 
@@ -537,12 +498,7 @@ class RutubePlugin(BasePlugin):
         except Exception as e:
             return f"RUTUBE Исключение при публикации: {e!r}"
 
-    # ── Завершение стрима ──────────────────────────────────────────────────
-
     async def stop_stream(self) -> str:
-        """
-        Переводит трансляцию в статус "done" (Завершено) на RUTUBE Studio.
-        """
         if not self.token:
             return "RUTUBE: Завершение трансляции недоступно (требуется API Token или Cookies)"
 
@@ -567,5 +523,45 @@ class RutubePlugin(BasePlugin):
         except Exception as e:
             return f"RUTUBE Исключение при завершении: {e!r}"
 
+    # ── Чат-слушатель и методы обмена ──
+
+    async def start_chat_listener(self):
+        await self.chat_client.start()
+
+    async def stop_chat_listener(self):
+        await self.chat_client.stop()
+
+    async def send_chat_message(self, text: str, reply_parent_msg_id: str = None) -> bool:
+        return await self.chat_client.send_message(text, reply_parent_msg_id=reply_parent_msg_id)
+
+    def register_sent_echo(self, echo_id: str):
+        if self._last_real_id:
+            from app.core.service_container import container
+            bus = container.get("event_bus")
+            if bus:
+                bus.emit("chat.message_id_updated", {
+                    "platform": "rutube",
+                    "old_id": echo_id,
+                    "new_id": self._last_real_id
+                })
+            self._last_real_id = None
+
     async def _fetch_user_login(self) -> str:
+        """Получает и кэширует имя пользователя RUTUBE."""
+        if self._cached_user_login:
+            return self._cached_user_login
+
+        if self.token:
+            try:
+                async with http_client.create_client(timeout=10.0) as client:
+                    url = "https://rutube.ru/api/v3/accounts/visitor/?client=wdp"
+                    resp = await client.get(url, headers=self.headers)
+                    if resp.status_code == 200:
+                        name = resp.json().get("name")
+                        if name:
+                            self._cached_user_login = name
+                            return name
+            except Exception:
+                pass
+
         return self.channel_id

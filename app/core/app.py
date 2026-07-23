@@ -89,9 +89,10 @@ class StreamTailApp:
         logger.info("Фоновая инициализация завершена.")
 
     def update_app_config(self, new_config: dict):
-        # Обновление словаря "на месте" сохраняет валидность ссылок во всех сервисах и планировщике
-        self.config.clear()
-        self.config.update(new_config)
+        if new_config is not self.config:
+            self.config.clear()
+            self.config.update(new_config)
+
         save_config(self.config)
 
         platform_config = self.config.get("platforms", {})
@@ -104,7 +105,6 @@ class StreamTailApp:
 
             if should_be_enabled:
                 plugin.enable()
-                # Запускаем слушатель чата только если плагин был выключен, предотвращая дублирование сокетов
                 if not was_enabled and hasattr(plugin, "start_chat_listener"):
                     asyncio.create_task(plugin.start_chat_listener())
             else:

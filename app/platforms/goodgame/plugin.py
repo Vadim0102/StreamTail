@@ -1,6 +1,5 @@
 import time
 import httpx
-from app.auth.goodgame_auth import TOKEN_URL
 from app.plugins.base import BasePlugin
 from app.auth.token_store import get_token, is_token_valid
 from app.utils.logger import logger
@@ -10,14 +9,21 @@ from app.utils import http_client
 class GoodGamePlugin(BasePlugin):
     def __init__(self, config=None):
         super().__init__(config)
+        self._last_real_id = None
+        self._cached_user_login = None
+        self._sent_messages_cache = []
+
+        from app.platforms.goodgame.chat import GoodGameChatClient
+        self.chat_client = GoodGameChatClient(self)
 
     @property
     def token_data(self):
         return get_token("goodgame") or {}
 
     @property
-    def token(self):
-        return self.token_data.get("access_token")
+    def token(self) -> str:
+        """Возвращает чистый OAuth2 Access Token из хранилища токенов."""
+        return self.token_data.get("access_token", "")
 
     @property
     def channel_slug(self) -> str:
@@ -51,7 +57,6 @@ class GoodGamePlugin(BasePlugin):
         return False
 
     async def _get_stream_id(self, client: httpx.AsyncClient) -> str:
-        """Автоматически получает точный ID трансляции из профиля /user."""
         if self.token:
             try:
                 resp = await client.get("https://goodgame.ru/api/4/user", headers=self.headers)
@@ -59,7 +64,6 @@ class GoodGamePlugin(BasePlugin):
                     data = resp.json()
                     stream_id = data.get("stream_id") or data.get("stream", {}).get("id") or data.get("channel", {}).get("id")
                     if stream_id:
-                        logger.info(f"GoodGame: Успешно получен ID стрима {stream_id} напрямую из профиля /user")
                         return str(stream_id)
             except Exception as e:
                 logger.debug(f"GoodGame: Не удалось получить ID из профиля: {e!r}")
@@ -79,10 +83,6 @@ class GoodGamePlugin(BasePlugin):
         return ""
 
     async def _update_stream_info(self, client: httpx.AsyncClient, stream_id: str, title: str = None, game_id: int = None) -> str:
-        """
-        Обновляет название и категорию трансляции на GoodGame, используя
-        официальный приватный эндпоинт из HAR-лога во избежание 404 ошибок.
-        """
         get_url = "https://goodgame.ru/api/4/streams/for-helpers/game-title"
         get_params = {"id": stream_id}
 
@@ -101,7 +101,6 @@ class GoodGamePlugin(BasePlugin):
         final_title = title if title is not None else current_title
         final_game_id = game_id if game_id is not None else current_game_id
 
-        # Формируем Payload в формате JSON в строгом соответствии с HAR-логом
         payload = {
             "id": int(stream_id),
             "title": final_title,
@@ -166,7 +165,7 @@ class GoodGamePlugin(BasePlugin):
             async with http_client.create_client() as client:
                 stream_id = await self._get_stream_id(client)
                 if not stream_id:
-                    return "GoodGame: Не удалось определить ID трансляции (проверьте авторизацию/slug)"
+                    return "GoodGame: Не удалось определить ID трансляции"
 
                 return await self._update_stream_info(client, stream_id, title=title)
         except Exception as e:
@@ -179,7 +178,6 @@ class GoodGamePlugin(BasePlugin):
 
         try:
             async with http_client.create_client() as client:
-                # 1. Поиск ID игры
                 search_url = "https://goodgame.ru/api/4/games"
                 search_resp = await client.get(search_url, params={"query": game})
                 game_id = None
@@ -201,9 +199,46 @@ class GoodGamePlugin(BasePlugin):
             return f"GoodGame Ошибка: {e!r}"
 
     async def refresh(self, client_id: str, client_secret: str, refresh_token: str) -> bool:
-        """Перенаправление во избежание сбоев устаревшего API."""
         from app.auth import goodgame_auth
         return await goodgame_auth.refresh(client_id, client_secret, refresh_token)
 
     async def _fetch_user_login(self) -> str:
+        if self._cached_user_login:
+            return self._cached_user_login
+
+        if self.token:
+            try:
+                async with http_client.create_client(timeout=10.0) as client:
+                    resp = await client.get("https://goodgame.ru/api/4/user", headers=self.headers)
+                    if resp.status_code == 200:
+                        username = resp.json().get("username") or resp.json().get("name")
+                        if username:
+                            self._cached_user_login = username
+                            return username
+            except Exception:
+                pass
+
         return self.channel_slug
+
+    # ── Методы чата ──
+
+    async def start_chat_listener(self):
+        await self.chat_client.start()
+
+    async def stop_chat_listener(self):
+        await self.chat_client.stop()
+
+    async def send_chat_message(self, text: str, reply_parent_msg_id: str = None) -> bool:
+        return await self.chat_client.send_message(text, reply_parent_msg_id=reply_parent_msg_id)
+
+    def register_sent_echo(self, echo_id: str):
+        if self._last_real_id:
+            from app.core.service_container import container
+            bus = container.get("event_bus")
+            if bus:
+                bus.emit("chat.message_id_updated", {
+                    "platform": "goodgame",
+                    "old_id": echo_id,
+                    "new_id": self._last_real_id
+                })
+            self._last_real_id = None

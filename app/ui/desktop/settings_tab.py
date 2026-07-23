@@ -1,38 +1,91 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-from app.utils import db
+import webbrowser
+import re
+import sys
+from PIL import Image
+
+from app.utils import db, theme_manager
 from app.utils.config import save_config
 from app.utils.paths import get_asset_path
 from app.utils.logger import logger
-from app.utils import theme_manager
 
 
-class CollapsibleInstruction(ttk.Frame):
-    def __init__(self, parent, title="❓ Инструкция: Как получить ID и секреты платформ", *args, **kwargs):
+class InstructionsWindow(tk.Toplevel):
+    """Отдельное окно с инструкцией по настройке платформ и кликабельными ссылками."""
+
+    def __init__(self, parent, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
-        self.collapsed = True
+        self.title("❓ Инструкция: Настройка платформ и OAuth2")
+        self.geometry("700x600")
+        self.transient(parent)
 
-        self.btn = ttk.Button(self, text="▶ Показать инструкцию по авторизации", command=self.toggle)
-        self.btn.pack(fill="x")
+        self.colors = theme_manager.get_theme_colors()
+        self.configure(bg=self.colors["bg"])
 
-        self.content_frame = ttk.Frame(self, padding=10)
+        self._set_window_icon()
+        self._build_ui()
+
+    def _set_window_icon(self):
+        icon_path = get_asset_path("icon.ico")
+        if icon_path.exists():
+            try:
+                if sys.platform == "win32":
+                    self.iconbitmap(str(icon_path))
+                else:
+                    from PIL import ImageTk
+                    img = Image.open(icon_path)
+                    photo = ImageTk.PhotoImage(img)
+                    self.iconphoto(True, photo)
+                    self._icon_ref = photo
+            except Exception as e:
+                logger.debug(f"Ошибка установки иконки окна инструкций: {e}")
+
+    def _build_ui(self):
+        header_frame = ttk.Frame(self, padding=15)
+        header_frame.pack(fill=tk.X)
+
+        ttk.Label(
+            header_frame,
+            text="📖 Как получить ID и секреты платформ",
+            font=("Segoe UI", 12, "bold")
+        ).pack(anchor="w")
+
+        text_frame = ttk.Frame(self, padding=(15, 0, 15, 10))
+        text_frame.pack(fill=tk.BOTH, expand=True)
 
         self.text_widget = tk.Text(
-            self.content_frame,
-            height=18,
+            text_frame,
             wrap="word",
-            font=("Segoe UI", 9),
-            background="#2a2a3a",
-            foreground="#cdd6f4",
-            relief="flat",
-            padx=10,
-            pady=10
+            font=("Segoe UI", 9, "normal"),
+            background=self.colors["field_bg"],
+            foreground=self.colors["fg"],
+            selectbackground=self.colors["select_bg"],
+            selectforeground=self.colors["fg"],
+            relief=tk.FLAT,
+            padx=12,
+            pady=12,
+            borderwidth=1
         )
-        self.text_widget.pack(fill="both", expand=True)
+        scrollbar = ttk.Scrollbar(text_frame, command=self.text_widget.yview)
+        self.text_widget.configure(yscrollcommand=scrollbar.set)
 
-        instructions = self._load_instructions()
-        self.text_widget.insert("1.0", instructions)
-        self.text_widget.config(state="disabled")
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.text_widget.pack(fill=tk.BOTH, expand=True)
+
+        # Конфигурация стиля гиперссылок
+        self.text_widget.tag_configure(
+            "hyperlink",
+            foreground=self.colors.get("text_blue", "#89b4fa"),
+            underline=True
+        )
+
+        content = self._load_instructions()
+        self._insert_content_with_links(content)
+
+        btn_frame = ttk.Frame(self, padding=10)
+        btn_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        ttk.Button(btn_frame, text="Закрыть", command=self.destroy, width=12).pack(side=tk.RIGHT, padx=5)
 
     def _load_instructions(self) -> str:
         try:
@@ -45,21 +98,43 @@ class CollapsibleInstruction(ttk.Frame):
 
         return "Ошибка: Файл инструкций 'assets/instructions.txt' не найден."
 
-    def toggle(self):
-        if self.collapsed:
-            self.content_frame.pack(fill="both", expand=True, pady=5)
-            self.btn.config(text="▼ Скрыть инструкцию по авторизации")
-            self.collapsed = False
-        else:
-            self.content_frame.pack_forget()
-            self.btn.config(text="▶ Показать инструкцию по авторизации")
-            self.collapsed = True
+    def _insert_content_with_links(self, content: str):
+        """Вставляет текст с автоматической подсветкой и привязкой кликабельных URL-ссылок."""
+        self.text_widget.config(state=tk.NORMAL)
+        self.text_widget.delete("1.0", tk.END)
+
+        # Регулярное выражение для поиска всех видов HTTP / HTTPS ссылок
+        url_pattern = re.compile(r'(https?://[^\s\)\>\]]+)')
+
+        last_idx = 0
+        for match in url_pattern.finditer(content):
+            start, end = match.span()
+            url = match.group(1)
+
+            if start > last_idx:
+                self.text_widget.insert(tk.END, content[last_idx:start])
+
+            tag_name = f"link_{start}"
+            self.text_widget.insert(tk.END, url, ("hyperlink", tag_name))
+
+            # Привязка событий нажатия и наведения курсора мыши
+            self.text_widget.tag_bind(tag_name, "<Button-1>", lambda e, u=url: webbrowser.open(u))
+            self.text_widget.tag_bind(tag_name, "<Enter>", lambda e: self.text_widget.config(cursor="hand2"))
+            self.text_widget.tag_bind(tag_name, "<Leave>", lambda e: self.text_widget.config(cursor=""))
+
+            last_idx = end
+
+        if last_idx < len(content):
+            self.text_widget.insert(tk.END, content[last_idx:])
+
+        self.text_widget.config(state=tk.DISABLED)
 
 
 class SettingsTab(ttk.Frame):
     def __init__(self, parent, app_core, *args, **kwargs):
         super().__init__(parent, padding=15, *args, **kwargs)
         self.app_core = app_core
+        self.instructions_win = None
         self._build_ui()
 
     def _build_ui(self):
@@ -89,14 +164,22 @@ class SettingsTab(ttk.Frame):
         scrollbar.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
 
+        # Верхняя панель заголовка с кнопкой вызова отдельного окна инструкции
+        top_header_frame = ttk.Frame(self.scrollable_frame)
+        top_header_frame.pack(fill="x", pady=(0, 15))
+
         ttk.Label(
-            self.scrollable_frame,
+            top_header_frame,
             text="⚙️ Настройки StreamTail",
             font=("Segoe UI", 16, "bold")
-        ).pack(anchor="w", pady=(0, 10))
+        ).pack(side="left")
 
-        self.instructions = CollapsibleInstruction(self.scrollable_frame)
-        self.instructions.pack(fill="x", pady=(0, 15))
+        self.btn_instructions = ttk.Button(
+            top_header_frame,
+            text="❓ Инструкция по авторизации",
+            command=self.open_instructions_window
+        )
+        self.btn_instructions.pack(side="right")
 
         app_frame = ttk.LabelFrame(self.scrollable_frame, text=" Основные настройки ", padding=10)
         app_frame.pack(fill="x", pady=5)
@@ -181,7 +264,6 @@ class SettingsTab(ttk.Frame):
             for key, label_text in fields:
                 ttk.Label(p_frame, text=label_text).grid(row=row, column=0, sticky="w", pady=2)
 
-                # Защита от обрезки при вставке многострочных файлов кук
                 is_multiline_cookie = (key == "token" and plat_name in ["livevk", "kick", "rutube"])
 
                 if is_multiline_cookie:
@@ -211,6 +293,14 @@ class SettingsTab(ttk.Frame):
                 row += 1
 
         self._bind_mouse_wheel(self)
+
+    def open_instructions_window(self):
+        """Открывает или выводит на передний план отдельное окно с инструкцией."""
+        if self.instructions_win is not None and self.instructions_win.winfo_exists():
+            self.instructions_win.lift()
+            self.instructions_win.focus_force()
+        else:
+            self.instructions_win = InstructionsWindow(self.winfo_toplevel())
 
     def _on_mouse_wheel(self, event):
         if event.num == 5 or event.delta < 0:

@@ -8,7 +8,7 @@ from app.utils.logger import logger
 
 
 class ChatPanelMixin:
-    """Примесь логики Мультичата для основного GUI с умной дебаунс-сортировкой."""
+    """Примесь логики Мультичата для основного GUI с умной дебаунс-сортировкой и автоскроллом."""
 
     def _build_chat_tab(self):
         frame = self.tab_chat
@@ -39,6 +39,8 @@ class ChatPanelMixin:
         self.chat_text.tag_configure("twitch_name", foreground="#cba6f7", font=("Segoe UI", 10, "bold"))
         self.chat_text.tag_configure("youtube_name", foreground="#f28c8c", font=("Segoe UI", 10, "bold"))
         self.chat_text.tag_configure("kick_name", foreground="#8cf290", font=("Segoe UI", 10, "bold"))
+        self.chat_text.tag_configure("rutube_name", foreground="#8ce2f2", font=("Segoe UI", 10, "bold"))
+        self.chat_text.tag_configure("goodgame_name", foreground="#f2b58c", font=("Segoe UI", 10, "bold"))
         self.chat_text.tag_configure("other_name", foreground="#89b4fa", font=("Segoe UI", 10, "bold"))
         self.chat_text.tag_configure("msg_text", foreground="#cdd6f4")
         self.chat_text.tag_configure("platform_tag", foreground="#f9e2af", font=("Segoe UI", 9, "bold"))
@@ -63,7 +65,7 @@ class ChatPanelMixin:
         self.chat_target_combo = ttk.Combobox(
             input_frame,
             textvariable=self.chat_target_var,
-            values=["Все активные", "Twitch", "YouTube", "Kick", "LiveVK", "GoodGame"],
+            values=["Все активные", "Twitch", "YouTube", "Kick", "LiveVK", "GoodGame", "Rutube"],
             state="readonly",
             width=15
         )
@@ -148,14 +150,13 @@ class ChatPanelMixin:
         text = data.get("text", "")
         msg_id = data.get("id", "")
 
-        # Безопасный парсинг и приведение UNIX-времени к миллисекундам
         raw_ts = data.get("timestamp")
         if raw_ts:
             try:
                 val = int(raw_ts)
-                if val < 10000000000:  # В секундах
+                if val < 10000000000:
                     timestamp = val * 1000
-                elif val > 10000000000000:  # В микросекундах
+                elif val > 10000000000000:
                     timestamp = val // 1000
                 else:
                     timestamp = val
@@ -167,7 +168,6 @@ class ChatPanelMixin:
         self.root.after(0, self._process_and_render_message, platform, author_name, text, msg_id, author_id, timestamp)
 
     def _process_and_render_message(self, platform, author, text, msg_id, author_id, timestamp):
-        # Дедупликация на случай наложения истории
         if msg_id:
             for m in self.visible_messages:
                 if m["msg_id"] == msg_id and m["platform"] == platform:
@@ -182,42 +182,33 @@ class ChatPanelMixin:
             "timestamp": timestamp
         }
 
-        # Анализируем, нарушен ли хронологический порядок на экране
         is_out_of_order = False
         if self.visible_messages and timestamp < self.visible_messages[-1]["timestamp"]:
             is_out_of_order = True
 
-        # Сразу добавляем и отображаем на экране для визуального отклика
         self.visible_messages.append(msg_obj)
         self._append_chat_message_gui(platform, author, text, msg_id, author_id, timestamp)
 
-        # Контроль переполнения буфера
         if len(self.visible_messages) > self.max_display_messages:
             self.visible_messages.pop(0)
             self.chat_text.config(state=tk.NORMAL)
             self.chat_text.delete("1.0", "2.0")
             self.chat_text.config(state=tk.DISABLED)
 
-        # Если сообщение выбивается из хронологии (загрузка истории), планируем отложенную перерисовку
         if is_out_of_order:
             self._schedule_deferred_sort()
 
     def _schedule_deferred_sort(self):
-        """Реализует паттерн дебаунса (сброс и перезапуск таймера при непрерывном потоке данных)."""
         if self._sort_timer_id:
             try:
                 self.root.after_cancel(self._sort_timer_id)
             except Exception:
                 pass
 
-        # Сортировка запустится ровно через 1.5 секунды ПОСЛЕ того, как поток истории иссякнет
         self._sort_timer_id = self.root.after(1500, self._deferred_sort_and_redraw)
 
     def _deferred_sort_and_redraw(self):
-        """Выполняет финальную хронологическую сортировку и перерисовывает экран."""
         self._sort_timer_id = None
-
-        # Хронологическая сортировка всего накопленного пула
         self.visible_messages.sort(key=lambda x: x["timestamp"])
 
         if len(self.visible_messages) > self.max_display_messages:
@@ -227,18 +218,15 @@ class ChatPanelMixin:
         logger.debug("Multi-chat: Выполнена отложенная хронологическая сортировка сообщений.")
 
     def _redraw_all_messages(self):
-        """Полная перерисовка текстового виджета на основе отсортированного буфера."""
         self.chat_text.config(state=tk.NORMAL)
         self.chat_text.delete("1.0", tk.END)
 
-        # Гарантированное удаление старых мета-тегов из памяти виджета для прохождения защиты от дубликатов
         for tag in list(self.chat_text.tag_names()):
             if tag.startswith("meta|"):
                 self.chat_text.tag_delete(tag)
 
         self.chat_text.config(state=tk.DISABLED)
 
-        # Отрисовываем заново весь отсортированный пул сообщений
         for msg in self.visible_messages:
             self._append_chat_message_gui(
                 msg["platform"],
@@ -248,6 +236,9 @@ class ChatPanelMixin:
                 msg["author_id"],
                 msg["timestamp"]
             )
+
+        # Автоскролл в самый низ после перерисовки всей истории
+        self.chat_text.see(tk.END)
 
     def _append_chat_message_gui(self, platform, author, text, msg_id, author_id, timestamp):
         platform = platform.lower()
@@ -281,6 +272,10 @@ class ChatPanelMixin:
             name_tag = "youtube_name"
         elif platform == "kick":
             name_tag = "kick_name"
+        elif platform == "rutube":
+            name_tag = "rutube_name"
+        elif platform == "goodgame":
+            name_tag = "goodgame_name"
 
         self.chat_text.insert(tk.END, f"{author}: ", name_tag)
         self.chat_text.insert(tk.END, f"{text}\n", "msg_text")
@@ -293,6 +288,9 @@ class ChatPanelMixin:
         meta_tag = f"meta|{platform}|{safe_msg_id}|{safe_author}|{safe_author_id}"
 
         self.chat_text.tag_add(meta_tag, start_index, end_index)
+
+        # Автоматическая прокрутка текстового поля вниз к последнему сообщению
+        self.chat_text.see(tk.END)
         self.chat_text.config(state=tk.DISABLED)
 
     def _on_chat_message_id_updated(self, data: dict):
@@ -311,7 +309,6 @@ class ChatPanelMixin:
                                           int(time.time() * 1000))
 
     def _update_message_id_gui(self, platform, old_id, new_id):
-        # Синхронизация буфера в памяти
         for msg in self.visible_messages:
             if msg["platform"] == platform and msg["msg_id"] == old_id:
                 msg["msg_id"] = new_id
@@ -349,7 +346,6 @@ class ChatPanelMixin:
         self.root.after(0, self._ban_chat_user_gui, platform, username)
 
     def _ban_chat_user_gui(self, platform, username):
-        # Синхронизация буфера в памяти
         for msg in self.visible_messages:
             if msg["platform"] == platform and msg["author"].lower() == username.lower():
                 msg["text"] = "<сообщение удалено модератором>"
@@ -372,6 +368,7 @@ class ChatPanelMixin:
                                               f"[{ts}] [{platform.upper()}] {author}: <сообщение удалено модератором>\n",
                                               "system")
 
+        self.chat_text.see(tk.END)
         self.chat_text.config(state=tk.DISABLED)
 
     def show_chat_context_menu(self, event):
@@ -528,7 +525,6 @@ class ChatPanelMixin:
         self.root.after(0, self._delete_chat_message_gui, platform, msg_id)
 
     def _delete_chat_message_gui(self, platform, msg_id):
-        # Синхронизация буфера в памяти
         for msg in self.visible_messages:
             if msg["platform"] == platform and msg["msg_id"] == msg_id:
                 msg["text"] = "<сообщение удалено модератором>"
@@ -552,4 +548,5 @@ class ChatPanelMixin:
                                           f"[{ts}] [{platform.upper()}] {author}: <сообщение удалено модератором>\n",
                                           "system")
                 break
+        self.chat_text.see(tk.END)
         self.chat_text.config(state=tk.DISABLED)
